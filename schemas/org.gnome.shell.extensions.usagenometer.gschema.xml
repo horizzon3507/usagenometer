@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.usagenometer"
+          path="/org/gnome/shell/extensions/usagenometer/">
+    <key name="update-interval-seconds" type="i">
+      <default>300</default>
+      <summary>Automatic refresh interval</summary>
+      <description>Number of seconds between usage refreshes.</description>
+    </key>
+    <key name="display-mode" type="s">
+      <default>'left'</default>
+      <summary>Usage display mode</summary>
+      <description>Choose whether the extension shows remaining quota or consumed quota.</description>
+    </key>
+    <key name="enabled-providers" type="as">
+      <default>['codex','cursor','antigravity']</default>
+      <summary>Enabled usage providers</summary>
+      <description>Which AI providers Usagenometer should poll.</description>
+    </key>
+    <key name="panel-mode" type="s">
+      <default>'compact'</default>
+      <summary>Panel label mode</summary>
+      <description>Show only the primary provider, or a compact multi-provider summary.</description>
+    </key>
+    <key name="primary-provider" type="s">
+      <default>'cursor'</default>
+      <summary>Primary provider</summary>
+      <description>Provider used for the panel label when panel mode is primary.</description>
+    </key>
+  </schema>
+</schemalist>

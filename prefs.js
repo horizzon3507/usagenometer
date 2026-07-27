@@ -7,19 +7,23 @@ import Gtk from 'gi://Gtk';
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {
-    CodexCliAuthError,
-    getCodexCliAuthPath,
-    loadCodexCliAuth,
-} from './codexAuth.js';
-import {
     DEFAULT_UPDATE_INTERVAL_SECONDS,
     DISPLAY_MODE_LEFT,
     DISPLAY_MODE_USED,
+    PANEL_MODE_COMPACT,
+    PANEL_MODE_PRIMARY,
 } from './constants.js';
-import {UsageApiClient, UsageApiError} from './usageApi.js';
+import {
+    DEFAULT_ENABLED_PROVIDERS,
+    PROVIDER_IDS,
+    PROVIDER_LABELS,
+    listProviderDefs,
+    normalizeEnabledProviders,
+    testProvider,
+} from './providers/registry.js';
 
-const CodexUsagePreferencesPage = GObject.registerClass(
-class CodexUsagePreferencesPage extends Adw.PreferencesPage {
+const UsagenometerPreferencesPage = GObject.registerClass(
+class UsagenometerPreferencesPage extends Adw.PreferencesPage {
     _init(settings) {
         super._init({
             title: _('General'),
@@ -27,16 +31,15 @@ class CodexUsagePreferencesPage extends Adw.PreferencesPage {
         });
 
         this._settings = settings;
-        this._client = new UsageApiClient();
-
         this.add(this._buildGeneralGroup());
-        this.add(this._buildCodexCliGroup());
+        this.add(this._buildProvidersGroup());
+        this.add(this._buildConnectionGroup());
     }
 
     _buildGeneralGroup() {
         const group = new Adw.PreferencesGroup({
-            title: _('Refresh'),
-            description: _('Control how the panel displays and refreshes Codex usage from ChatGPT.'),
+            title: _('Refresh & display'),
+            description: _('Control how the panel shows AI usage across providers.'),
         });
 
         const adjustment = new Gtk.Adjustment({
@@ -54,23 +57,18 @@ class CodexUsagePreferencesPage extends Adw.PreferencesPage {
             climb_rate: 1,
             digits: 0,
         });
-
         this._settings.bind(
             'update-interval-seconds',
             row,
             'value',
             Gio.SettingsBindFlags.DEFAULT,
         );
-
         group.add(row);
 
         const displayRow = new Adw.ComboRow({
             title: _('Display value'),
-            subtitle: _('Choose whether the panel shows remaining or used quota.'),
-            model: Gtk.StringList.new([
-                _('Left'),
-                _('Used'),
-            ]),
+            subtitle: _('Remaining or used quota on meters and the panel.'),
+            model: Gtk.StringList.new([_('Left'), _('Used')]),
             selected: this._getDisplayMode() === DISPLAY_MODE_USED ? 1 : 0,
         });
         displayRow.connect('notify::selected', combo => {
@@ -81,79 +79,90 @@ class CodexUsagePreferencesPage extends Adw.PreferencesPage {
         });
         group.add(displayRow);
 
+        const panelRow = new Adw.ComboRow({
+            title: _('Panel mode'),
+            subtitle: _('Compact multi-provider summary or a single primary provider.'),
+            model: Gtk.StringList.new([_('Compact all'), _('Primary only')]),
+            selected: this._getPanelMode() === PANEL_MODE_PRIMARY ? 1 : 0,
+        });
+        panelRow.connect('notify::selected', combo => {
+            this._settings.set_string(
+                'panel-mode',
+                combo.selected === 1 ? PANEL_MODE_PRIMARY : PANEL_MODE_COMPACT,
+            );
+        });
+        group.add(panelRow);
+
+        const providerIds = Object.values(PROVIDER_IDS);
+        const primaryRow = new Adw.ComboRow({
+            title: _('Primary provider'),
+            subtitle: _('Used when panel mode is Primary only.'),
+            model: Gtk.StringList.new(providerIds.map(id => PROVIDER_LABELS[id])),
+            selected: Math.max(0, providerIds.indexOf(this._getPrimaryProvider())),
+        });
+        primaryRow.connect('notify::selected', combo => {
+            const id = providerIds[combo.selected] ?? PROVIDER_IDS.CURSOR;
+            this._settings.set_string('primary-provider', id);
+        });
+        group.add(primaryRow);
+
         return group;
     }
 
-    _buildCodexCliGroup() {
+    _buildProvidersGroup() {
         const group = new Adw.PreferencesGroup({
-            title: _('Codex CLI'),
-            description: _('The extension reads the bearer token from the local Codex CLI auth file.'),
+            title: _('Providers'),
+            description: _('Enable the AI usage sources Usagenometer should poll.'),
         });
 
-        const sourceRow = new Adw.ActionRow({
-            title: _('Token source'),
-            subtitle: getCodexCliAuthPath(),
-        });
-        group.add(sourceRow);
-
-        const authRow = new Adw.ActionRow({
-            title: _('Local auth'),
-            subtitle: _('Not checked yet.'),
-        });
-        const checkButton = new Gtk.Button({
-            label: _('Check'),
-            valign: Gtk.Align.CENTER,
-        });
-        checkButton.connect('clicked', () => {
-            void this._updateLocalAuthStatus(authRow);
-        });
-        authRow.add_suffix(checkButton);
-        group.add(authRow);
-        void this._updateLocalAuthStatus(authRow);
-
-        const statusRow = new Adw.ActionRow({
-            title: _('Connection test'),
-            subtitle: _('Not checked yet.'),
-        });
-        const testButton = new Gtk.Button({
-            label: _('Test'),
-            valign: Gtk.Align.CENTER,
-        });
-        testButton.connect('clicked', () => {
-            void this._testCodexCliToken(statusRow);
-        });
-        statusRow.add_suffix(testButton);
-        group.add(statusRow);
+        const enabled = new Set(this._getEnabledProviders());
+        for (const def of listProviderDefs()) {
+            const row = new Adw.SwitchRow({
+                title: def.label,
+                subtitle: providerSubtitle(def.id),
+                active: enabled.has(def.id),
+            });
+            row.connect('notify::active', switchRow => {
+                this._setProviderEnabled(def.id, switchRow.active);
+            });
+            group.add(row);
+        }
 
         return group;
     }
 
-    async _updateLocalAuthStatus(row) {
-        try {
-            const auth = await loadCodexCliAuth({allowExpired: true});
-            row.subtitle = auth.expiresAt !== null
-                ? `Access token found; expires ${formatUnixTime(auth.expiresAt)}`
-                : _('Access token found; expiry not recognized.');
-        } catch (error) {
-            row.subtitle = formatPreferenceError(error);
+    _buildConnectionGroup() {
+        const group = new Adw.PreferencesGroup({
+            title: _('Connection tests'),
+            description: _('Probe local auth and the provider APIs without changing settings.'),
+        });
+
+        for (const def of listProviderDefs()) {
+            const row = new Adw.ActionRow({
+                title: def.label,
+                subtitle: _('Not checked yet.'),
+            });
+            const button = new Gtk.Button({
+                label: _('Test'),
+                valign: Gtk.Align.CENTER,
+            });
+            button.connect('clicked', () => {
+                void this._runProviderTest(def.id, row);
+            });
+            row.add_suffix(button);
+            group.add(row);
         }
+
+        return group;
     }
 
-    async _testCodexCliToken(statusRow) {
-        statusRow.subtitle = _('Testing Codex CLI token...');
-
+    async _runProviderTest(providerId, row) {
+        row.subtitle = _('Testing...');
         try {
-            const auth = await loadCodexCliAuth();
-            const summary = await this._client.fetchSummary(auth.accessToken);
-            const displayMode = this._getDisplayMode();
-            const value = displayMode === DISPLAY_MODE_USED ? summary.used : summary.left;
-            const label = displayMode === DISPLAY_MODE_USED ? _('used') : _('left');
-            const formatted = value !== null
-                ? new Intl.NumberFormat().format(Math.round(value))
-                : _('available');
-            statusRow.subtitle = `${_('Connection OK')} · ${formatted} ${label}`;
+            const result = await testProvider(providerId);
+            row.subtitle = result.message;
         } catch (error) {
-            statusRow.subtitle = formatPreferenceError(error);
+            row.subtitle = error instanceof Error ? error.message : String(error);
         }
     }
 
@@ -162,33 +171,57 @@ class CodexUsagePreferencesPage extends Adw.PreferencesPage {
         return mode === DISPLAY_MODE_USED ? DISPLAY_MODE_USED : DISPLAY_MODE_LEFT;
     }
 
-    destroy() {
-        this._client.destroy();
-        super.destroy();
+    _getPanelMode() {
+        const mode = this._settings.get_string('panel-mode');
+        return mode === PANEL_MODE_PRIMARY ? PANEL_MODE_PRIMARY : PANEL_MODE_COMPACT;
+    }
+
+    _getPrimaryProvider() {
+        const value = this._settings.get_string('primary-provider');
+        return Object.values(PROVIDER_IDS).includes(value) ? value : PROVIDER_IDS.CURSOR;
+    }
+
+    _getEnabledProviders() {
+        try {
+            const values = this._settings.get_strv('enabled-providers');
+            const normalized = normalizeEnabledProviders(values);
+            return normalized.length > 0 ? normalized : [...DEFAULT_ENABLED_PROVIDERS];
+        } catch (error) {
+            return [...DEFAULT_ENABLED_PROVIDERS];
+        }
+    }
+
+    _setProviderEnabled(providerId, enabled) {
+        const current = new Set(this._getEnabledProviders());
+        if (enabled)
+            current.add(providerId);
+        else
+            current.delete(providerId);
+
+        const ordered = Object.values(PROVIDER_IDS).filter(id => current.has(id));
+        this._settings.set_strv(
+            'enabled-providers',
+            ordered.length > 0 ? ordered : [...DEFAULT_ENABLED_PROVIDERS],
+        );
     }
 });
 
-export default class CodexUsagePreferences extends ExtensionPreferences {
+export default class UsagenometerPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
-        window.add(new CodexUsagePreferencesPage(settings));
+        window.add(new UsagenometerPreferencesPage(settings));
     }
 }
 
-function formatUnixTime(unixSeconds) {
-    const dateTime = GLib.DateTime.new_from_unix_local(Math.round(unixSeconds));
-    return dateTime ? dateTime.format('%F %R') : _('unknown');
-}
-
-function formatPreferenceError(error) {
-    if (error instanceof CodexCliAuthError)
-        return error.message;
-
-    if (error instanceof UsageApiError && error.isAuthError)
-        return _('Codex CLI token was rejected. Run codex login.');
-
-    if (error instanceof Error)
-        return error.message;
-
-    return _('Unknown error');
+function providerSubtitle(id) {
+    switch (id) {
+    case PROVIDER_IDS.CODEX:
+        return _('Local Codex CLI auth (~/.codex/auth.json)');
+    case PROVIDER_IDS.CURSOR:
+        return _('Cursor app session (state.vscdb) · Auto+Composer and API pools');
+    case PROVIDER_IDS.ANTIGRAVITY:
+        return _('Antigravity secret-store OAuth · Gemini and Claude/GPT quotas');
+    default:
+        return '';
+    }
 }

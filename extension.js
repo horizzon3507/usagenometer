@@ -9,35 +9,44 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {CodexCliAuthError, loadCodexCliAuth} from './codexAuth.js';
 import {
     DEFAULT_UPDATE_INTERVAL_SECONDS,
     DISPLAY_MODE_LEFT,
     DISPLAY_MODE_USED,
+    PANEL_MODE_COMPACT,
+    PANEL_MODE_PRIMARY,
 } from './constants.js';
-import {UsageApiClient, UsageApiError} from './usageApi.js';
+import {
+    DEFAULT_ENABLED_PROVIDERS,
+    PROVIDER_IDS,
+    PROVIDER_LABELS,
+    fetchAllProviders,
+    normalizeEnabledProviders,
+} from './providers/registry.js';
 
-const PROGRESS_BAR_WIDTH = 360;
-const PROGRESS_BAR_HEIGHT = 7;
+const PROGRESS_BAR_WIDTH = 300;
+const PROGRESS_BAR_HEIGHT = 5;
 const PANEL_ICON_SIZE = 16;
 const MENU_TITLE_STYLE = 'color: #fff;';
+const PROVIDER_SHORT = {
+    [PROVIDER_IDS.CODEX]: 'X',
+    [PROVIDER_IDS.CURSOR]: 'C',
+    [PROVIDER_IDS.ANTIGRAVITY]: 'A',
+};
 
-const CodexUsageIndicator = GObject.registerClass(
-class CodexUsageIndicator extends PanelMenu.Button {
+const UsagenometerIndicator = GObject.registerClass(
+class UsagenometerIndicator extends PanelMenu.Button {
     _init(extension) {
-        super._init(0.5, _('Codex Usage Indicator'));
+        super._init(0.5, _('Usagenometer'));
 
         this._extension = extension;
         this._settings = extension.getSettings();
-        this._client = new UsageApiClient();
         this._menuOpenStateChangedId = null;
         this._refreshSourceId = null;
         this._refreshInFlight = null;
         this._state = {
-            summary: null,
-            auth: null,
+            providers: [],
             lastUpdated: null,
-            error: null,
         };
 
         const box = new St.BoxLayout({
@@ -47,7 +56,7 @@ class CodexUsageIndicator extends PanelMenu.Button {
             gicon: Gio.icon_new_for_string(GLib.build_filenamev([
                 this._extension.path,
                 'icons',
-                'codex-symbolic.svg',
+                'usagenometer-symbolic.svg',
             ])),
             icon_size: PANEL_ICON_SIZE,
             style_class: 'system-status-icon',
@@ -74,6 +83,21 @@ class CodexUsageIndicator extends PanelMenu.Button {
         );
         this._settings.connectObject(
             'changed::display-mode',
+            () => this._renderCurrentState(),
+            this,
+        );
+        this._settings.connectObject(
+            'changed::enabled-providers',
+            () => void this.refresh(),
+            this,
+        );
+        this._settings.connectObject(
+            'changed::panel-mode',
+            () => this._renderCurrentState(),
+            this,
+        );
+        this._settings.connectObject(
+            'changed::primary-provider',
             () => this._renderCurrentState(),
             this,
         );
@@ -118,14 +142,14 @@ class CodexUsageIndicator extends PanelMenu.Button {
         this._refreshTimestampLabel.text = _('Refreshing...');
         this._refreshInFlight = this._refreshUsage()
             .catch(error => {
-                reportError(error, '[codex-usage-indicator] refresh failed');
+                reportError(error, '[usagenometer] refresh failed');
             })
             .finally(() => {
                 this._refreshInFlight = null;
                 try {
                     this._renderCurrentState();
                 } catch (error) {
-                    reportError(error, '[codex-usage-indicator] render failed');
+                    reportError(error, '[usagenometer] render failed');
                 }
             });
 
@@ -134,27 +158,31 @@ class CodexUsageIndicator extends PanelMenu.Button {
 
     async _refreshUsage() {
         try {
-            const auth = await loadCodexCliAuth();
-            const summary = await this._client.fetchSummary(auth.accessToken);
+            const enabled = this._getEnabledProviders();
+            const providers = await fetchAllProviders(enabled);
             this._state = {
-                summary,
-                auth,
+                providers,
                 lastUpdated: GLib.DateTime.new_now_local(),
-                error: null,
             };
         } catch (error) {
+            reportError(error, '[usagenometer] usage refresh failed');
             this._state = {
                 ...this._state,
-                error: formatRefreshError(error),
+                providers: this._state.providers.map(provider => ({
+                    ...provider,
+                    status: provider.status === 'ok' ? 'ok' : 'error',
+                    error: provider.error ?? formatGenericError(error),
+                })),
             };
-            reportError(error, '[codex-usage-indicator] usage refresh failed');
         }
     }
 
     _renderCurrentState() {
         const displayMode = this._getDisplayMode();
-
-        this._setLabel(formatPanelLabel(this._state, displayMode));
+        this._setLabel(formatPanelLabel(this._state, displayMode, {
+            panelMode: this._getPanelMode(),
+            primaryProvider: this._getPrimaryProvider(),
+        }));
         this._refreshTimestampLabel.text = formatLastUpdatedValue(this._state);
         this._renderUsage(this._state, displayMode);
     }
@@ -162,28 +190,17 @@ class CodexUsageIndicator extends PanelMenu.Button {
     _renderUsage(state, displayMode) {
         this._usageSection.removeAll();
 
-        this._usageSection.addMenuItem(createInfoMenuItem(
-            formatUsageTitle(state),
-            formatUsageSummary(state, displayMode),
-            formatUsageMeta(state),
-        ));
-
-        const windows = getVisibleWindows(state.summary);
-        if (windows.length === 0) {
+        const providers = state.providers ?? [];
+        if (providers.length === 0) {
             this._usageSection.addMenuItem(new PopupMenu.PopupMenuItem(
-                state.error ?? _('No 5h or week data available.'),
+                _('No providers enabled.'),
                 {reactive: false, can_focus: false},
             ));
             return;
         }
 
-        for (const window of windows) {
-            this._usageSection.addMenuItem(createUsageProgressMenuItem(
-                window.title,
-                window,
-                displayMode,
-            ));
-        }
+        for (const provider of providers)
+            this._usageSection.addMenuItem(createProviderMenuItem(provider, displayMode));
     }
 
     _restartRefreshTimer() {
@@ -216,6 +233,26 @@ class CodexUsageIndicator extends PanelMenu.Button {
         return mode === DISPLAY_MODE_USED ? DISPLAY_MODE_USED : DISPLAY_MODE_LEFT;
     }
 
+    _getPanelMode() {
+        const mode = this._settings.get_string('panel-mode');
+        return mode === PANEL_MODE_PRIMARY ? PANEL_MODE_PRIMARY : PANEL_MODE_COMPACT;
+    }
+
+    _getPrimaryProvider() {
+        const value = this._settings.get_string('primary-provider');
+        return Object.values(PROVIDER_IDS).includes(value) ? value : PROVIDER_IDS.CURSOR;
+    }
+
+    _getEnabledProviders() {
+        try {
+            const values = this._settings.get_strv('enabled-providers');
+            const normalized = normalizeEnabledProviders(values);
+            return normalized.length > 0 ? normalized : [...DEFAULT_ENABLED_PROVIDERS];
+        } catch (error) {
+            return [...DEFAULT_ENABLED_PROVIDERS];
+        }
+    }
+
     destroy() {
         if (this._refreshSourceId) {
             GLib.Source.remove(this._refreshSourceId);
@@ -227,14 +264,13 @@ class CodexUsageIndicator extends PanelMenu.Button {
             this.menu.disconnect(this._menuOpenStateChangedId);
             this._menuOpenStateChangedId = null;
         }
-        this._client.destroy();
         super.destroy();
     }
 });
 
-export default class CodexUsageExtension extends Extension {
+export default class UsagenometerExtension extends Extension {
     enable() {
-        this._indicator = new CodexUsageIndicator(this);
+        this._indicator = new UsagenometerIndicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
     }
 
@@ -292,7 +328,62 @@ function createInfoMenuItem(title, subtitle = '', meta = '') {
     return menuItem;
 }
 
-function createUsageProgressMenuItem(title, window, displayMode) {
+function createProviderMenuItem(provider, displayMode) {
+    const menuItem = new PopupMenu.PopupBaseMenuItem({
+        reactive: false,
+        can_focus: false,
+        style_class: 'usagenometer-provider',
+    });
+    const content = new St.BoxLayout({vertical: true, x_expand: true});
+    const header = new St.BoxLayout({x_expand: true});
+    header.add_child(new St.Label({
+        text: formatProviderTitle(provider),
+        style: 'font-weight: 700;',
+        x_expand: true,
+        x_align: Clutter.ActorAlign.START,
+    }));
+    header.add_child(new St.Label({
+        text: provider.status === 'ok' ? formatProviderMeta(provider) : provider.status,
+        style_class: 'dim-label',
+        x_align: Clutter.ActorAlign.END,
+    }));
+    content.add_child(header);
+
+    if (provider.status !== 'ok' || provider.meters.length === 0) {
+        content.add_child(new St.Label({
+            text: provider.error ?? _('No usage data available.'),
+            style_class: 'dim-label',
+            x_align: Clutter.ActorAlign.START,
+        }));
+    } else {
+        for (const meter of provider.meters)
+            content.add_child(createCompactMeter(meter, displayMode));
+    }
+
+    menuItem.add_child(content);
+    return menuItem;
+}
+
+function createCompactMeter(meter, displayMode) {
+    const row = new St.BoxLayout({vertical: true, x_expand: true});
+    const labels = new St.BoxLayout({x_expand: true});
+    labels.add_child(new St.Label({
+        text: meter.title,
+        style_class: 'dim-label',
+        x_expand: true,
+        x_align: Clutter.ActorAlign.START,
+    }));
+    labels.add_child(new St.Label({
+        text: formatMeterValue(meter, displayMode),
+        style: 'font-weight: 700;',
+        x_align: Clutter.ActorAlign.END,
+    }));
+    row.add_child(labels);
+    row.add_child(createProgressBar(getMeterProgressPercent(meter, displayMode), displayMode));
+    return row;
+}
+
+function createUsageProgressMenuItem(title, meter, displayMode) {
     const menuItem = new PopupMenu.PopupBaseMenuItem({
         reactive: false,
         can_focus: false,
@@ -310,14 +401,14 @@ function createUsageProgressMenuItem(title, window, displayMode) {
     }));
 
     content.add_child(new St.Label({
-        text: formatWindowValue(window, displayMode),
+        text: formatMeterValue(meter, displayMode),
         style: 'font-weight: 700; font-size: 1.08em;',
         x_align: Clutter.ActorAlign.START,
     }));
 
-    content.add_child(createProgressBar(getWindowProgressPercent(window, displayMode), displayMode));
+    content.add_child(createProgressBar(getMeterProgressPercent(meter, displayMode), displayMode));
 
-    const subtitle = formatWindowSubtitle(window);
+    const subtitle = formatMeterSubtitle(meter);
     if (subtitle) {
         content.add_child(new St.Label({
             text: subtitle,
@@ -354,8 +445,8 @@ function createProgressBar(percent, displayMode) {
         style: [
             'background-color: rgba(255, 255, 255, 0.16);',
             `border-radius: ${Math.floor(PROGRESS_BAR_HEIGHT / 2)}px;`,
-            'margin-top: 6px;',
-            'margin-bottom: 5px;',
+            'margin-top: 3px;',
+            'margin-bottom: 4px;',
         ].join(' '),
     });
 
@@ -367,129 +458,199 @@ function createProgressBar(percent, displayMode) {
     return track;
 }
 
-function formatPanelLabel(state, displayMode) {
-    if (!state.summary && state.error)
-        return _('!');
-
-    if (!state.summary)
+function formatPanelLabel(state, displayMode, {panelMode, primaryProvider}) {
+    const providers = state.providers ?? [];
+    if (providers.length === 0)
         return _('--');
 
-    const value = displayMode === DISPLAY_MODE_USED ? state.summary.used : state.summary.left;
-    const suffix = displayMode === DISPLAY_MODE_USED ? _('used') : _('left');
+    if (panelMode === PANEL_MODE_PRIMARY) {
+        const primary = providers.find(provider => provider.id === primaryProvider) ??
+            providers[0];
+        return formatSingleProviderPanel(primary, displayMode);
+    }
 
-    if (value !== null)
-        return `${formatCompact(value)} ${suffix}`;
+    const parts = providers.map(provider => {
+        const short = PROVIDER_SHORT[provider.id] ?? provider.id.slice(0, 1).toUpperCase();
+        if (provider.status !== 'ok')
+            return `${short}!`;
+        const meter = pickPrimaryMeter(provider);
+        if (!meter)
+            return `${short}–`;
+        return `${short} ${formatMeterCompact(meter, displayMode)}`;
+    });
 
-    const percent = displayMode === DISPLAY_MODE_USED
-        ? state.summary.percent
-        : state.summary.leftPercent;
-    if (percent !== null)
-        return `${Math.round(percent * 100)}% ${suffix}`;
+    return parts.join(' · ') || _('--');
+}
 
-    return _('n/a');
+function formatSingleProviderPanel(provider, displayMode) {
+    if (!provider)
+        return _('--');
+    if (provider.status === 'auth' || provider.status === 'error')
+        return _('!');
+    if (provider.status !== 'ok')
+        return _('--');
+
+    const meter = pickPrimaryMeter(provider);
+    if (!meter)
+        return _('--');
+    return formatMeterCompact(meter, displayMode);
+}
+
+function pickPrimaryMeter(provider) {
+    if (!provider?.meters?.length)
+        return null;
+    // Prefer API/5h style meters first for "most actionable"
+    const preferred = provider.meters.find(meter =>
+        /api|5h|session|primary/i.test(`${meter.id} ${meter.title}`));
+    return preferred ?? provider.meters[0];
+}
+
+function formatMeterCompact(meter, displayMode) {
+    if (displayMode === DISPLAY_MODE_USED) {
+        if (meter.percent !== null)
+            return `${Math.round(meter.percent * 100)}%`;
+        if (meter.used !== null)
+            return formatCompact(meter.used);
+    } else {
+        if (meter.leftPercent !== null)
+            return `${Math.round(meter.leftPercent * 100)}%`;
+        if (meter.left !== null)
+            return formatCompact(meter.left);
+    }
+    return 'n/a';
+}
+
+function formatProviderTitle(provider) {
+    const label = provider.label ?? PROVIDER_LABELS[provider.id] ?? provider.id;
+    if (provider.account)
+        return `${label} · ${provider.account}`;
+    if (provider.plan)
+        return `${label} · ${formatPlanType(provider.plan)}`;
+    return label;
+}
+
+function formatProviderSummary(provider, displayMode) {
+    if (provider.status !== 'ok')
+        return provider.error ?? _('Unavailable');
+
+    if (provider.meters.length === 0)
+        return _('No meters returned');
+
+    const parts = [];
+    if (provider.plan)
+        parts.push(formatPlanType(provider.plan));
+
+    const worst = pickWorstMeter(provider.meters, displayMode);
+    if (worst)
+        parts.push(`${worst.title}: ${formatMeterCompact(worst, displayMode)}`);
+
+    return parts.join(' · ') || _('OK');
+}
+
+function formatProviderMeta(provider) {
+    if (provider.status === 'ok')
+        return `${provider.meters.length} ${_('meters')}`;
+    return provider.status;
+}
+
+function pickWorstMeter(meters, displayMode) {
+    let best = null;
+    let bestScore = -1;
+    for (const meter of meters) {
+        const used = displayMode === DISPLAY_MODE_USED
+            ? (meter.percent ?? (meter.leftPercent !== null ? 1 - meter.leftPercent : null))
+            : (meter.leftPercent !== null ? 1 - meter.leftPercent : meter.percent);
+        if (used === null)
+            continue;
+        if (used > bestScore) {
+            bestScore = used;
+            best = meter;
+        }
+    }
+    return best ?? meters[0] ?? null;
+}
+
+function formatMeterValue(meter, displayMode) {
+    if (displayMode === DISPLAY_MODE_USED) {
+        if (meter.unit === 'percent' && meter.percent !== null)
+            return `${Math.round(meter.percent * 100)}% used`;
+        if (meter.used !== null && meter.limit !== null)
+            return `${formatNumber(meter.used)} / ${formatNumber(meter.limit)} used`;
+        if (meter.used !== null)
+            return `${formatNumber(meter.used)} used`;
+        if (meter.percent !== null)
+            return `${Math.round(meter.percent * 100)}% used`;
+    } else {
+        if (meter.unit === 'percent' && meter.leftPercent !== null)
+            return `${Math.round(meter.leftPercent * 100)}% remaining`;
+        if (meter.left !== null && meter.limit !== null)
+            return `${formatNumber(meter.left)} left of ${formatNumber(meter.limit)}`;
+        if (meter.left !== null)
+            return `${formatNumber(meter.left)} remaining`;
+        if (meter.leftPercent !== null)
+            return `${Math.round(meter.leftPercent * 100)}% remaining`;
+    }
+    return _('Unavailable');
+}
+
+function formatMeterSubtitle(meter) {
+    const parts = [];
+    const resetText = formatMeterReset(meter);
+    if (resetText)
+        parts.push(resetText);
+    if (meter.limit !== null && meter.unit !== 'percent')
+        parts.push(`${formatNumber(meter.limit)} total`);
+    return parts.join('  •  ');
+}
+
+function formatMeterReset(meter) {
+    if (typeof meter.resetAt === 'number' && Number.isFinite(meter.resetAt)) {
+        const resetDateTime = GLib.DateTime.new_from_unix_local(Math.round(meter.resetAt));
+        const now = GLib.DateTime.new_now_local();
+        if (resetDateTime && now && isSameDay(resetDateTime, now))
+            return `Resets ${resetDateTime.format('%H:%M')}`;
+        if (resetDateTime)
+            return `Resets ${resetDateTime.format('%b %d, %Y %H:%M')}`;
+    }
+
+    if (typeof meter.resetAfterSeconds === 'number' && Number.isFinite(meter.resetAfterSeconds))
+        return `Resets in ${formatDuration(meter.resetAfterSeconds)}`;
+
+    return '';
+}
+
+function getMeterProgressPercent(meter, displayMode) {
+    if (displayMode === DISPLAY_MODE_USED)
+        return meter.percent ?? (meter.leftPercent !== null ? 1 - meter.leftPercent : null);
+    return meter.leftPercent ?? (meter.percent !== null ? 1 - meter.percent : null);
+}
+
+function normalizeProgressPercent(percent) {
+    if (typeof percent !== 'number' || !Number.isFinite(percent))
+        return null;
+    return Math.max(0, Math.min(percent, 1));
+}
+
+function getProgressColor(percent, displayMode) {
+    if (displayMode !== DISPLAY_MODE_USED) {
+        if (percent <= 0.1)
+            return '#ed333b';
+        if (percent <= 0.3)
+            return '#f6d32d';
+        return '#2ec27e';
+    }
+
+    if (percent >= 0.9)
+        return '#ed333b';
+    if (percent >= 0.7)
+        return '#f6d32d';
+    return '#62a0ea';
 }
 
 function formatLastUpdatedValue(state) {
     if (!state.lastUpdated)
         return _('never');
-
     return state.lastUpdated.format('%F %R');
-}
-
-function formatUsageTitle(state) {
-    const email = state.summary?.email?.trim();
-    if (email)
-        return email;
-
-    return _('Codex CLI account');
-}
-
-function formatUsageSummary(state, displayMode) {
-    if (!state.summary && state.error)
-        return state.error;
-
-    if (!state.summary)
-        return _('Waiting for data...');
-
-    const parts = [];
-    if (state.summary.planType)
-        parts.push(formatPlanType(state.summary.planType));
-
-    const resetCreditsText = formatResetCredits(state.summary.rateLimitResetCredits);
-    if (resetCreditsText)
-        parts.push(resetCreditsText);
-
-    const summaryText = parts.length > 0
-        ? parts.join(' · ')
-        : formatSummary(state.summary, displayMode);
-    return state.error ? `${summaryText} (${_('stale')})` : summaryText;
-}
-
-function formatUsageMeta(state) {
-    const parts = [];
-
-    const resetExpiryText = formatResetCreditExpiry(state.summary?.rateLimitResetCredits);
-    if (resetExpiryText)
-        parts.push(resetExpiryText);
-
-    if (state.error && state.summary)
-        parts.push(state.error);
-
-    return parts.join('  •  ');
-}
-
-function formatRefreshError(error) {
-    if (error instanceof CodexCliAuthError)
-        return error.message;
-
-    if (error instanceof UsageApiError && error.isAuthError)
-        return _('Codex CLI token was rejected. Run codex login.');
-
-    if (error instanceof Error)
-        return error.message;
-
-    return _('Unknown error');
-}
-
-function formatSummary(summary, displayMode) {
-    const contextParts = [];
-    if (summary.planType)
-        contextParts.push(formatPlanType(summary.planType));
-    if (summary.limitName)
-        contextParts.push(summary.limitName);
-
-    const summaryPrefix = contextParts.length > 0 ? `${contextParts.join(' · ')} · ` : '';
-    const resetText = formatResetText(summary.resetAt, summary.resetAfterSeconds);
-
-    if (displayMode === DISPLAY_MODE_USED) {
-        if (summary.used !== null && summary.limit !== null) {
-            const percent = summary.percent !== null
-                ? ` (${Math.round(summary.percent * 100)}% used)`
-                : '';
-            return `${summaryPrefix}${formatNumber(summary.used)} used of ${formatNumber(summary.limit)}${percent}${resetText}`;
-        }
-
-        if (summary.used !== null)
-            return `${summaryPrefix}${formatNumber(summary.used)} used${resetText}`;
-
-        if (summary.percent !== null)
-            return `${summaryPrefix}${Math.round(summary.percent * 100)}% used${resetText}`;
-    } else {
-        if (summary.left !== null && summary.limit !== null) {
-            const percent = summary.leftPercent !== null
-                ? ` (${Math.round(summary.leftPercent * 100)}% left)`
-                : '';
-            return `${summaryPrefix}${formatNumber(summary.left)} left of ${formatNumber(summary.limit)}${percent}${resetText}`;
-        }
-
-        if (summary.left !== null)
-            return `${summaryPrefix}${formatNumber(summary.left)} left${resetText}`;
-
-        if (summary.leftPercent !== null)
-            return `${summaryPrefix}${Math.round(summary.leftPercent * 100)}% left${resetText}`;
-    }
-
-    return _('Usage data available, but no totals were recognized.');
 }
 
 function formatPlanType(planType) {
@@ -515,247 +676,16 @@ function formatPlanType(planType) {
             .replace(/\b\w/g, char => char.toUpperCase());
 }
 
-function formatResetCredits(rateLimitResetCredits) {
-    const availableCount = rateLimitResetCredits?.availableCount;
-    if (availableCount === null || availableCount === undefined)
-        return '';
-
-    return `${formatNumber(availableCount)} ${_('resets available')}`;
-}
-
-function formatResetCreditExpiry(rateLimitResetCredits) {
-    const expiresAt = rateLimitResetCredits?.nextExpiresAt;
-    if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt))
-        return '';
-
-    const formatted = formatMenuDateTime(expiresAt);
-    if (!formatted)
-        return '';
-
-    const availableCount = rateLimitResetCredits?.availableCount;
-    const label = availableCount > 1 ? _('next reset expires') : _('reset expires');
-    return `${label} ${formatted}`;
-}
-
-function formatMenuDateTime(unixSeconds) {
-    const dateTime = GLib.DateTime.new_from_unix_local(Math.round(unixSeconds));
-    const now = GLib.DateTime.new_now_local();
-
-    if (!dateTime)
-        return '';
-
-    if (now && isSameDay(dateTime, now))
-        return dateTime.format('%H:%M');
-
-    return dateTime.format('%b %d, %Y %H:%M');
-}
-
-function getVisibleWindows(summary) {
-    if (!summary)
-        return [];
-
-    const windows = [];
-    addRateLimitWindows(windows, summary.rateLimit, null);
-    addRateLimitWindows(windows, summary.codeReviewRateLimit, _('Code review'));
-
-    for (const rateLimit of getAdditionalRateLimitItems(summary.additionalRateLimits))
-        addRateLimitWindows(windows, rateLimit, rateLimit.limitName);
-
-    if (windows.length === 0) {
-        if (summary.primaryWindow)
-            windows.push({title: formatLimitWindowTitle(null, 'primary', summary.primaryWindow), ...summary.primaryWindow});
-        if (summary.weekWindow)
-            windows.push({title: formatLimitWindowTitle(null, 'secondary', summary.weekWindow), ...summary.weekWindow});
-    }
-
-    return windows;
-}
-
-function addRateLimitWindows(output, rateLimit, limitName) {
-    if (!rateLimit)
-        return;
-
-    let added = false;
-
-    if (rateLimit.primaryWindow) {
-        output.push({
-            title: formatLimitWindowTitle(limitName, 'primary', rateLimit.primaryWindow),
-            ...rateLimit.primaryWindow,
-        });
-        added = true;
-    }
-
-    if (rateLimit.secondaryWindow) {
-        output.push({
-            title: formatLimitWindowTitle(limitName, 'secondary', rateLimit.secondaryWindow),
-            ...rateLimit.secondaryWindow,
-        });
-        added = true;
-    }
-
-    if (added)
-        return;
-
-    for (const window of rateLimit.windows ?? []) {
-        output.push({
-            title: formatLimitWindowTitle(limitName, null, window),
-            ...window,
-        });
-    }
-}
-
-function getAdditionalRateLimitItems(value) {
-    if (Array.isArray(value))
-        return value;
-
-    if (!value || typeof value !== 'object')
-        return [];
-
-    return Object.values(value);
-}
-
-function formatLimitWindowTitle(limitName, kind, window) {
-    const prefix = typeof limitName === 'string' && limitName.trim()
-        ? `${limitName.trim()} `
-        : '';
-
-    if (isPrimaryWindow(window))
-        return `${prefix}${_('5 hour usage limit')}`;
-
-    if (isWeekWindow(window))
-        return `${prefix}${_('Weekly usage limit')}`;
-
-    // Older responses may omit a duration. Only then use the API field name
-    // as a fallback; an explicit duration always determines the label.
-    if (window?.windowSeconds === null && kind === 'primary')
-        return `${prefix}${_('5 hour usage limit')}`;
-
-    if (window?.windowSeconds === null && kind === 'secondary')
-        return `${prefix}${_('Weekly usage limit')}`;
-
-    const label = typeof window?.label === 'string' && window.label.trim()
-        ? window.label.trim()
-        : _('Usage');
-    return `${prefix}${label} ${_('usage limit')}`;
-}
-
-function isPrimaryWindow(window) {
-    return window?.period !== 'weekly' &&
-        window?.windowSeconds !== null &&
-        Math.abs(window.windowSeconds - 5 * 3600) <= 2 * 3600;
-}
-
-function isWeekWindow(window) {
-    return window?.period === 'weekly' || (
-        window?.windowSeconds !== null &&
-        Math.abs(window.windowSeconds - 7 * 86400) <= 86400
-    );
-}
-
-function formatWindowValue(window, displayMode) {
-    if (displayMode === DISPLAY_MODE_USED) {
-        if (window.used !== null)
-            return `${formatCompact(window.used)} used`;
-
-        if (window.percent !== null)
-            return `${Math.round(window.percent * 100)}% used`;
-    } else {
-        if (window.left !== null)
-            return `${formatCompact(window.left)} remaining`;
-
-        if (window.leftPercent !== null)
-            return `${Math.round(window.leftPercent * 100)}% remaining`;
-    }
-
-    return _('Unavailable');
-}
-
-function formatWindowSubtitle(window) {
-    const parts = [];
-
-    const resetText = formatWindowReset(window);
-    if (resetText)
-        parts.push(resetText);
-
-    if (window.limit !== null)
-        parts.push(`${formatNumber(window.limit)} total`);
-
-    if (window.used !== null)
-        parts.push(`${formatNumber(window.used)} used`);
-
-    return parts.join('  •  ');
-}
-
-function formatWindowReset(window) {
-    if (typeof window.resetAt === 'number' && Number.isFinite(window.resetAt)) {
-        const resetDateTime = GLib.DateTime.new_from_unix_local(Math.round(window.resetAt));
-        const now = GLib.DateTime.new_now_local();
-
-        if (resetDateTime && now && isSameDay(resetDateTime, now))
-            return `Resets ${resetDateTime.format('%H:%M')}`;
-
-        if (resetDateTime)
-            return `Resets ${resetDateTime.format('%b %d, %Y %H:%M')}`;
-    }
-
-    if (typeof window.resetAfterSeconds === 'number' && Number.isFinite(window.resetAfterSeconds))
-        return `Resets in ${formatDuration(window.resetAfterSeconds)}`;
-
-    return '';
+function formatGenericError(error) {
+    if (error instanceof Error)
+        return error.message;
+    return _('Unknown error');
 }
 
 function isSameDay(left, right) {
     return left.get_year() === right.get_year() &&
         left.get_month() === right.get_month() &&
         left.get_day_of_month() === right.get_day_of_month();
-}
-
-function getWindowUsedPercent(window) {
-    if (typeof window.percent === 'number' && Number.isFinite(window.percent))
-        return window.percent;
-
-    if (typeof window.leftPercent === 'number' && Number.isFinite(window.leftPercent))
-        return 1 - window.leftPercent;
-
-    return null;
-}
-
-function getWindowProgressPercent(window, displayMode) {
-    if (displayMode === DISPLAY_MODE_USED)
-        return getWindowUsedPercent(window);
-
-    if (typeof window.leftPercent === 'number' && Number.isFinite(window.leftPercent))
-        return window.leftPercent;
-
-    const usedPercent = getWindowUsedPercent(window);
-    return usedPercent !== null ? 1 - usedPercent : null;
-}
-
-function normalizeProgressPercent(percent) {
-    if (typeof percent !== 'number' || !Number.isFinite(percent))
-        return null;
-
-    return Math.max(0, Math.min(percent, 1));
-}
-
-function getProgressColor(percent, displayMode) {
-    if (displayMode !== DISPLAY_MODE_USED) {
-        if (percent <= 0.1)
-            return '#ed333b';
-
-        if (percent <= 0.3)
-            return '#f6d32d';
-
-        return '#2ec27e';
-    }
-
-    if (percent >= 0.9)
-        return '#ed333b';
-
-    if (percent >= 0.7)
-        return '#f6d32d';
-
-    return '#62a0ea';
 }
 
 function formatNumber(value) {
@@ -769,19 +699,6 @@ function formatCompact(value) {
     }).format(value);
 }
 
-function formatResetText(resetAt, resetAfterSeconds) {
-    if (typeof resetAfterSeconds === 'number' && Number.isFinite(resetAfterSeconds))
-        return `, resets in ${formatDuration(resetAfterSeconds)}`;
-
-    if (typeof resetAt === 'number' && Number.isFinite(resetAt)) {
-        const resetDateTime = GLib.DateTime.new_from_unix_local(Math.round(resetAt));
-        if (resetDateTime)
-            return `, resets ${resetDateTime.format('%b %d %R')}`;
-    }
-
-    return '';
-}
-
 function formatDuration(totalSeconds) {
     const seconds = Math.max(0, Math.round(totalSeconds));
     const hours = Math.floor(seconds / 3600);
@@ -789,12 +706,9 @@ function formatDuration(totalSeconds) {
 
     if (hours > 0 && minutes > 0)
         return `${hours}h ${minutes}m`;
-
     if (hours > 0)
         return `${hours}h`;
-
     if (minutes > 0)
         return `${minutes}m`;
-
     return `${seconds}s`;
 }

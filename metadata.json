@@ -1,8 +1,8 @@
 {
-  "uuid": "codex-usage-indicator@stone.dev",
-  "name": "Codex Usage Indicator",
-  "description": "Shows Codex usage from the local Codex CLI auth in the GNOME top bar.",
-  "version": 10,
+  "uuid": "usagenometer@horizzon3507",
+  "name": "Usagenometer",
+  "description": "Shows AI usage meters in the GNOME top bar for Codex, Cursor (Auto+Composer and API pools), and Antigravity.",
+  "version": 2,
   "shell-version": [
     "45",
     "46",
@@ -11,6 +11,6 @@
     "49",
     "50"
   ],
-  "settings-schema": "org.gnome.shell.extensions.codex-usage-indicator",
-  "url": "https://github.com/stonega/codex-usage-indicator"
+  "settings-schema": "org.gnome.shell.extensions.usagenometer",
+  "url": "https://github.com/horizzon3507/usagenometer"
 }
