@@ -2,6 +2,12 @@ import {fetchAntigravitySnapshot, testAntigravityConnection} from './antigravity
 import {fetchCodexSnapshot, testCodexConnection} from './codex/index.js';
 import {fetchCursorSnapshot, testCursorConnection} from './cursor/index.js';
 import {
+    fetchClaudeSnapshot,
+    fetchGrokSnapshot,
+    testClaudeConnection,
+    testGrokConnection,
+} from './cli/index.js';
+import {
     DEFAULT_ENABLED_PROVIDERS,
     PROVIDER_IDS,
     PROVIDER_LABELS,
@@ -12,12 +18,16 @@ const FETCHERS = {
     [PROVIDER_IDS.CODEX]: fetchCodexSnapshot,
     [PROVIDER_IDS.CURSOR]: fetchCursorSnapshot,
     [PROVIDER_IDS.ANTIGRAVITY]: fetchAntigravitySnapshot,
+    [PROVIDER_IDS.CLAUDE]: fetchClaudeSnapshot,
+    [PROVIDER_IDS.GROK]: fetchGrokSnapshot,
 };
 
 const TESTERS = {
     [PROVIDER_IDS.CODEX]: testCodexConnection,
     [PROVIDER_IDS.CURSOR]: testCursorConnection,
     [PROVIDER_IDS.ANTIGRAVITY]: testAntigravityConnection,
+    [PROVIDER_IDS.CLAUDE]: testClaudeConnection,
+    [PROVIDER_IDS.GROK]: testGrokConnection,
 };
 
 export {

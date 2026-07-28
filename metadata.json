@@ -1,7 +1,7 @@
 {
   "uuid": "usagenometer@horizzon3507",
-  "name": "Usagenometer",
-  "description": "Shows AI usage meters in the GNOME top bar for Codex, Cursor (Auto+Composer and API pools), and Antigravity.",
+  "name": "Usagenometer (beta)",
+  "description": "[beta] Shows AI usage meters in the GNOME top bar for Codex, Cursor (Auto+Composer and API pools), and Antigravity. Prefer the usagenometer / usg CLI for the stable experience.",
   "version": 2,
   "shell-version": [
     "45",

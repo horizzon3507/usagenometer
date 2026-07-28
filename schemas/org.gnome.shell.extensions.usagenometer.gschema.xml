@@ -13,7 +13,7 @@
       <description>Choose whether the extension shows remaining quota or consumed quota.</description>
     </key>
     <key name="enabled-providers" type="as">
-      <default>['codex','cursor','antigravity']</default>
+      <default>['codex','cursor','antigravity','claude','grok']</default>
       <summary>Enabled usage providers</summary>
       <description>Which AI providers Usagenometer should poll.</description>
     </key>

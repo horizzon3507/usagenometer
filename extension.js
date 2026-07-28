@@ -24,20 +24,22 @@ import {
     normalizeEnabledProviders,
 } from './providers/registry.js';
 
-const PROGRESS_BAR_WIDTH = 300;
-const PROGRESS_BAR_HEIGHT = 5;
+const PROGRESS_BAR_WIDTH = 380;
+const PROGRESS_BAR_HEIGHT = 6;
 const PANEL_ICON_SIZE = 16;
 const MENU_TITLE_STYLE = 'color: #fff;';
 const PROVIDER_SHORT = {
     [PROVIDER_IDS.CODEX]: 'X',
     [PROVIDER_IDS.CURSOR]: 'C',
     [PROVIDER_IDS.ANTIGRAVITY]: 'A',
+    [PROVIDER_IDS.CLAUDE]: 'Cl',
+    [PROVIDER_IDS.GROK]: 'G',
 };
 
 const UsagenometerIndicator = GObject.registerClass(
 class UsagenometerIndicator extends PanelMenu.Button {
     _init(extension) {
-        super._init(0.5, _('Usagenometer'));
+        super._init(0.5, _('Usagenometer (beta)'));
 
         this._extension = extension;
         this._settings = extension.getSettings();
@@ -349,6 +351,14 @@ function createProviderMenuItem(provider, displayMode) {
     }));
     content.add_child(header);
 
+    if (provider.account) {
+        content.add_child(new St.Label({
+            text: provider.account,
+            style_class: 'dim-label',
+            x_align: Clutter.ActorAlign.START,
+        }));
+    }
+
     if (provider.status !== 'ok' || provider.meters.length === 0) {
         content.add_child(new St.Label({
             text: provider.error ?? _('No usage data available.'),
@@ -522,8 +532,6 @@ function formatMeterCompact(meter, displayMode) {
 
 function formatProviderTitle(provider) {
     const label = provider.label ?? PROVIDER_LABELS[provider.id] ?? provider.id;
-    if (provider.account)
-        return `${label} · ${provider.account}`;
     if (provider.plan)
         return `${label} · ${formatPlanType(provider.plan)}`;
     return label;

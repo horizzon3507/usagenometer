@@ -1,39 +1,77 @@
-# Usagenometer
+# ◈ usagenometer
 
-GNOME Shell extension that shows **AI usage meters** in the top bar for multiple providers:
+**usagenometer** — AI usage meters in the terminal.  
+Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity) and prints compact black & white quotas — no secrets stored by the tool.
+
+```
+◈  usagenometer
+
+  Codex  ·  you@example.com  ·  plus
+    5 hour usage limit ━━━━━━━━━━────────  42%  ·  reset 3h12m
+    Weekly usage limit ━━━────────────────  18%  ·  reset 4d2h
+
+  Cursor  ·  pro
+    Auto + Composer    ━━━━━━━━━━━━━─────  74%
+    API pool           ━━━━━━────────────  37%
+```
+
+## Install
+
+### Build from source
+
+```bash
+cargo install --path . --force
+# or
+cargo build --release
+# binaries: target/release/usagenometer  target/release/usg
+```
+
+| Command | Description |
+|---------|-------------|
+| `usagenometer` | full name |
+| `usg` | short alias |
+
+## Usage
+
+```bash
+usg                         # status (default)
+usg status -p codex -p cursor
+usg watch --interval 60
+usg test
+usg test antigravity
+usg providers               # usg ls
+usg json --pretty           # usg j
+usg --help
+```
+
+### Global options
+
+| Flag | Meaning |
+|------|---------|
+| `-p` / `--provider` | Limit to provider(s); repeatable (`codex` `cursor` `antigravity` `claude` `grok`) |
+| `--display left\|used` | Emphasize remaining (default) or used |
+| `--json` / `--pretty` | Machine-readable output |
+| `-q` / `--quiet` | Less stdout noise |
+
+### Providers
 
 | Provider | Source | What you see |
 |----------|--------|----------------|
-| **Codex** | Local Codex CLI `~/.codex/auth.json` + ChatGPT usage API | 5h / weekly (and related) limits |
-| **Cursor** | Cursor app session (`state.vscdb`) + `cursor.com/api/usage-summary` | **Auto + Composer** and **API** pools |
-| **Antigravity** | Secret store OAuth (`service=gemini`, `username=antigravity`) + Cloud Code quota API | Gemini and Claude/GPT 5h + weekly pools |
+| **Codex** | `~/.codex/auth.json` + ChatGPT WHAM usage API | 5h / weekly limits |
+| **Cursor** | Cursor `state.vscdb` + `cursor.com/api/usage-summary` | Auto + Composer, API |
+| **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools |
+| **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) |
+| **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly |
 
-Compatible with GNOME Shell `45`–`50`.
+Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
-## Features
+## GNOME Shell extension (beta)
 
-- Multi-provider polling with per-provider enable toggles
-- Compact panel label (`C 31% · X 42% · A 98%`) or primary-only mode
-- Compact provider cards with inline meters and fewer menu actors
-- Configurable refresh interval and left/used display
-- Preferences connection tests for each provider
-
-## Auth (no secrets stored by the extension)
-
-- **Codex**: reads bearer token from `~/.codex/auth.json` (run `codex login`)
-- **Cursor**: reads `cursorAuth/accessToken` from `~/.config/Cursor/User/globalStorage/state.vscdb` (sign in to Cursor)
-- **Antigravity**: reads OAuth JSON from the desktop secret store (`secret-tool lookup service gemini username antigravity`), refreshes via Google OAuth when needed (sign in with Antigravity app/CLI)
-
-Claude is currently covered by Antigravity's `Claude/GPT` quota pools. There is no standalone Claude or Grok provider in this extension yet, so they are not exposed as fake settings toggles.
-
-If Antigravity needs to refresh an expired token, provide `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` in the GNOME Shell environment. Existing access tokens can be used without them.
-
-## Local install
+The top-bar GNOME extension in this repo is **beta**. Prefer the CLI for day-to-day use. Compatible with GNOME Shell `45`–`50`.
 
 ```fish
 cd ~/usagenometer
 
-# pack with all sources
 gnome-extensions pack --force \
   --extra-source=codexAuth.js \
   --extra-source=constants.js \
@@ -47,48 +85,31 @@ gnome-extensions install --force /tmp/usagenometer@horizzon3507.shell-extension.
 glib-compile-schemas ~/.local/share/gnome-shell/extensions/usagenometer@horizzon3507/schemas
 ```
 
-Then **log out and back in** (Wayland), and:
+Then log out/in (Wayland) and:
 
 ```fish
 gnome-extensions enable usagenometer@horizzon3507
 gnome-extensions prefs usagenometer@horizzon3507
 ```
 
-Dev symlink (optional):
-
-```fish
-set EXT ~/.local/share/gnome-shell/extensions/usagenometer@horizzon3507
-ln -sfn ~/usagenometer $EXT
-glib-compile-schemas $EXT/schemas
-```
-
 ## Tests
 
-```fish
+```bash
+cargo test
 gjs -m tests/usageApi.test.js
 ```
 
 ## Layout
 
 ```
-extension.js          # panel + menu
-prefs.js              # settings UI
-codexAuth.js          # Codex CLI auth
-usageApi.js           # Codex ChatGPT usage API
-providers/
-  registry.js
-  types.js
-  codex/
-  cursor/
-  antigravity/
-lib/
-  http.js
-  asyncSubprocess.js
-schemas/
+src/                  # Rust CLI (usagenometer / usg)
+extension.js          # GNOME panel + menu (beta)
+prefs.js              # GNOME settings UI (beta)
+providers/            # GNOME JS providers (beta)
 ```
 
 ## Notes
 
-- Tokens are never written to GSettings.
-- Cursor and Antigravity private APIs can change; failures surface as provider-level errors without crashing other providers.
-- Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after install.
+- Tokens are never written by usagenometer.
+- Cursor and Antigravity private APIs can change; failures stay per-provider.
+- Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after extension install.

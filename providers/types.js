@@ -2,18 +2,24 @@ export const PROVIDER_IDS = Object.freeze({
     CODEX: 'codex',
     CURSOR: 'cursor',
     ANTIGRAVITY: 'antigravity',
+    CLAUDE: 'claude',
+    GROK: 'grok',
 });
 
 export const PROVIDER_LABELS = Object.freeze({
     [PROVIDER_IDS.CODEX]: 'Codex',
     [PROVIDER_IDS.CURSOR]: 'Cursor',
     [PROVIDER_IDS.ANTIGRAVITY]: 'Antigravity',
+    [PROVIDER_IDS.CLAUDE]: 'Claude',
+    [PROVIDER_IDS.GROK]: 'Grok',
 });
 
 export const DEFAULT_ENABLED_PROVIDERS = Object.freeze([
     PROVIDER_IDS.CODEX,
     PROVIDER_IDS.CURSOR,
     PROVIDER_IDS.ANTIGRAVITY,
+    PROVIDER_IDS.CLAUDE,
+    PROVIDER_IDS.GROK,
 ]);
 
 /**

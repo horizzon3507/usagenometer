@@ -221,6 +221,10 @@ function providerSubtitle(id) {
         return _('Cursor app session (state.vscdb) · Auto+Composer and API pools');
     case PROVIDER_IDS.ANTIGRAVITY:
         return _('Antigravity secret-store OAuth · Gemini and Claude/GPT quotas');
+    case PROVIDER_IDS.CLAUDE:
+        return _('Claude CLI detected · quota details are available inside Claude with /usage');
+    case PROVIDER_IDS.GROK:
+        return _('Grok CLI detected · no local quota endpoint is exposed');
     default:
         return '';
     }

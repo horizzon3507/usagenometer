@@ -78,7 +78,14 @@ function metersFromCodexSummary(summary) {
     const pushWindow = (window, fallbackTitle) => {
         if (!window)
             return;
-        const id = window.id ?? fallbackTitle;
+        const rawId = String(window.id ?? window.label ?? fallbackTitle);
+        // The API may expose primary/week windows both as named fields and in
+        // `windows`. Collapse those aliases so the popup never shows duplicates.
+        const id = /week|7.?day/i.test(rawId)
+            ? 'weekly'
+            : /5.?h|hour|primary|session/i.test(rawId)
+                ? 'primary'
+                : rawId;
         if (seen.has(id))
             return;
         seen.add(id);

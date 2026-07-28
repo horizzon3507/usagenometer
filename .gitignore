@@ -2,3 +2,4 @@ usagenometer@horizzon3507.shell-extension.zip
 schemas/gschemas.compiled
 .codex
 dist/
+/target/
