@@ -1,10 +1,10 @@
 //! Shared snapshot / meter types.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SnapshotStatus {
     Ok,
@@ -24,7 +24,7 @@ impl SnapshotStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageMeter {
     pub id: String,
     pub title: String,
@@ -39,7 +39,7 @@ pub struct UsageMeter {
     pub window_seconds: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSnapshot {
     pub id: String,
     pub label: String,
@@ -48,6 +48,9 @@ pub struct ProviderSnapshot {
     pub account: Option<String>,
     pub plan: Option<String>,
     pub meters: Vec<UsageMeter>,
+    /// Age in seconds when served from cache after a failed live fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_age_secs: Option<u64>,
 }
 
 impl ProviderSnapshot {
@@ -60,6 +63,7 @@ impl ProviderSnapshot {
             account: None,
             plan: None,
             meters: vec![],
+            stale_age_secs: None,
         }
     }
 
@@ -72,6 +76,7 @@ impl ProviderSnapshot {
             account: None,
             plan: None,
             meters: vec![],
+            stale_age_secs: None,
         }
     }
 }

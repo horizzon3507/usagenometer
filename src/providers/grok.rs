@@ -29,6 +29,7 @@ pub fn fetch(client: &HttpClient) -> ProviderSnapshot {
                     account: None,
                     plan: None,
                     meters: vec![],
+                    stale_age_secs: None,
                 }
             } else if which("grok") && err.status == SnapshotStatus::Error {
                 ProviderSnapshot::fail(ID, LABEL, SnapshotStatus::Error, err.message)
@@ -307,6 +308,7 @@ pub fn snapshot_from_billing(
         account: email.map(str::to_string),
         plan,
         meters,
+        stale_age_secs: None,
     }
 }
 

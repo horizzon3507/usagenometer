@@ -14,6 +14,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 The **CLI** (`usagenometer` / `usg`) is the primary surface. The **GNOME Shell extension** ships in-tree as a **beta** companion — not the default install path.
 
+## [CLI 0.2.0-beta] - 2026-07-31
+
+> **Beta** — config, history/ETA, alerts, doctor, TUI, scripting hooks. Prefer the CLI over the GNOME panel.
+
+### Added
+
+**CLI (Rust)**
+
+- Persistent XDG config (`~/.config/usagenometer/config.toml`) + `usg config [--dump]`; CLI flags override.
+- Threshold alerts (`--alert` / config / per-provider `[alerts]`), optional `notify-send`, watch de-dupe.
+- Local SQLite history (`usg history [--spark]`), exhaustion ETA on status when enough samples exist.
+- Compact one-liner (`-c` / `--compact`) for shell statuslines.
+- Short snapshot cache with `(stale Xm)` fallback on API failure.
+- `usg doctor` — auth path / expiry / Antigravity OAuth env checks (no secrets).
+- `usg explain [provider]` — inline meter/plan docs.
+- `usg check --fail-under PCT` — scripting exit code when remaining % is low.
+- `--format prometheus` text exposition; existing `--json` / `--pretty` retained.
+- `usg watch --diff` — show only meters that changed between polls.
+- Routing hint when one provider is low and others have headroom (skipped in compact/quiet).
+- Privacy mode (`--privacy` / config) redacts account identifiers in status, watch, history, doctor, JSON.
+- Interactive `usg tui` (ratatui; `q` / `r` / `j`/`k`).
+- `usg completions <shell>` via clap_complete.
+
 ## [CLI 0.1.0-beta] - 2026-07-28
 
 > **Beta** — multi-provider meters work; Claude/Grok private APIs can change. Prefer the CLI over the GNOME panel.

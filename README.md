@@ -7,7 +7,7 @@ Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity) and pr
 ◈  usagenometer
 
   Codex  ·  you@example.com  ·  plus
-    5 hour usage limit ━━━━━━━━━━────────  42%  ·  reset 3h12m
+    5 hour usage limit ━━━━━━━━━━────────  42%  ·  reset 3h12m  ·  eta ~2h10m
     Weekly usage limit ━━━────────────────  18%  ·  reset 4d2h
 
   Cursor  ·  pro
@@ -35,12 +35,19 @@ cargo build --release
 
 ```bash
 usg                         # status (default)
+usg -c                      # compact one-liner (statuslines)
 usg status -p codex -p cursor
-usg watch --interval 60
+usg watch --interval 60 --alert 80 --diff
+usg check --fail-under 10   # exit 2 if remaining % below threshold
 usg test
-usg test antigravity
-usg providers               # usg ls
-usg json --pretty           # usg j
+usg doctor                  # auth paths / expiry (no secrets)
+usg explain [provider]
+usg history --spark
+usg config --dump
+usg tui                     # interactive live view
+usg json --pretty
+usg --format prometheus
+usg completions zsh         # write to stdout
 usg --help
 ```
 
@@ -50,8 +57,73 @@ usg --help
 |------|---------|
 | `-p` / `--provider` | Limit to provider(s); repeatable (`codex` `cursor` `antigravity` `claude` `grok`) |
 | `--display left\|used` | Emphasize remaining (default) or used |
-| `--json` / `--pretty` | Machine-readable output |
+| `-c` / `--compact` | One-liner: `Codex 42% · Cursor 74%` |
+| `--privacy` | Redact account emails / identifiers |
+| `--alert PCT` | Warn when used % ≥ PCT (also `watch --alert`) |
+| `--notify` | Desktop `notify-send` on alerts (best-effort) |
+| `--json` / `--pretty` | Machine-readable JSON |
+| `--format text\|json\|prometheus` | Output format |
 | `-q` / `--quiet` | Less stdout noise |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `status` (`st`) | Show meters (default). Supports `--compact`. |
+| `watch` (`w`) | Refresh on an interval. `--diff` shows only changes. |
+| `check` | Exit `2` if any meter **remaining** % is below `--fail-under` (default 10). |
+| `test` (`t`) | Auth + API connectivity |
+| `providers` (`ls`) | List providers |
+| `json` (`j`) | Dump snapshots as JSON |
+| `doctor` | Diagnose auth files, token expiry, Antigravity OAuth env |
+| `explain` | Inline docs for plan/meter meanings |
+| `history` | Local SQLite snapshots (`--spark` for burn sparklines) |
+| `config` | Show XDG paths; `--dump` effective TOML |
+| `tui` | Interactive TUI (`q` quit, `r` refresh, `j`/`k` select) |
+| `completions` | Generate bash/zsh/fish/… completions to stdout |
+| `version` | Print version |
+
+### Config
+
+File: `~/.config/usagenometer/config.toml` (XDG). CLI flags override config.
+
+```toml
+providers = []                 # empty = all
+provider_order = ["codex", "cursor", "claude", "antigravity", "grok"]
+watch_interval = 60
+display = "left"               # or "used"
+alert = 80                     # global used-% threshold
+privacy = false
+compact = false
+notify = false
+cache_ttl = 300                # seconds (stale fallback window scaling)
+history = true                 # persist snapshots for ETA / history
+
+[alerts]
+codex = 90                     # per-provider used-% overrides
+cursor = 85
+```
+
+Data / cache:
+
+| Path | Use |
+|------|-----|
+| `~/.local/share/usagenometer/history.sqlite3` | Snapshot history |
+| `~/.cache/usagenometer/snapshots/` | Short cache for stale fallback |
+
+### Scripting notes
+
+- `usg check --fail-under 10` — **fail when remaining &lt; 10%** (used &gt; 90%). Exit `2` on failure.
+- `usg --format prometheus` — Prometheus text exposition (`usagenometer_used_ratio`, `usagenometer_left_ratio`, `usagenometer_up`).
+- Compact mode skips routing hints; quiet/compact skip banners.
+
+### Shell completions
+
+```bash
+usg completions bash > ~/.local/share/bash-completion/completions/usg
+usg completions zsh  > "${fpath[1]}/_usg"   # or your completions dir
+usg completions fish > ~/.config/fish/completions/usg.fish
+```
 
 ### Providers
 
@@ -111,5 +183,6 @@ providers/            # GNOME JS providers (beta)
 ## Notes
 
 - Tokens are never written by usagenometer.
+- On API failure, a recent cached snapshot may show as `(stale Xm)` when available.
 - Cursor and Antigravity private APIs can change; failures stay per-provider.
 - Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after extension install.

@@ -306,6 +306,7 @@ pub fn snapshot_from_quota_summary(summary: &Value, account: Option<&str>) -> Pr
         account: account.map(str::to_string),
         plan: None,
         meters,
+        stale_age_secs: None,
     }
 }
 
