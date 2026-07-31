@@ -14,7 +14,7 @@ makedepends=('cargo')
 optdepends=('libnotify: desktop notifications for usg --notify / --alert')
 options=('!lto')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/${_surface}/v${_pkgver}.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('899e13de72411d0687e938d15a0a86ddb7853e9a19106b94f029f7328f862447')
 
 prepare() {
   cd "$pkgname-${_surface}-v${_pkgver}"
