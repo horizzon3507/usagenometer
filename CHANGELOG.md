@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 The **CLI** (`usagenometer` / `usg`) is the primary surface. The **GNOME Shell extension** ships in-tree as a **beta** companion — not the default install path.
 
-## [CLI 0.2.0-beta] - 2026-07-31
+## [CLI 0.1.1-beta] - 2026-07-31
 
 > **Beta** — config, history/ETA, alerts, doctor, TUI, scripting hooks. Prefer the CLI over the GNOME panel.
 
