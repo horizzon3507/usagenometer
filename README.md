@@ -41,10 +41,9 @@ cargo install --path . --force
 | Surface | Tag | Ships |
 |---------|-----|-------|
 | **CLI** | `cli/vX.Y.Z-alpha\|beta\|stable` | crates.io + AUR + GitHub Release |
-| **Desktop** | `desktop/vX.Y.Z-…` | GNOME Shell extension (companion) |
-| **Web** | `web/vX.Y.Z-…` | reserved |
+| **GNOME Shell** | `gnome/vX.Y.Z-…` | GNOME Shell extension (companion) |
 
-See [CHANGELOG.md](CHANGELOG.md) and [packaging/aur/README.md](packaging/aur/README.md).
+See [VERSIONING.md](VERSIONING.md), [CHANGELOG.md](CHANGELOG.md), and [packaging/aur/README.md](packaging/aur/README.md).
 
 ## Usage
 

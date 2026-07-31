@@ -2,27 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with an explicit **release channel** suffix (same scheme as [optMusic](https://github.com/fireflylabss/optMusic)).
+Versioning, surfaces, channels, and tag format: see [VERSIONING.md](VERSIONING.md).
 
-### Surfaces + tags
+## [CLI 0.1.2-beta] - 2026-07-31
 
-| Surface | What it is | Git tag |
-|---------|------------|---------|
-| **CLI** | `usagenometer` / `usg` (Rust) — primary | `cli/vX.Y.Z-<channel>` |
-| **Desktop** | GNOME Shell extension (companion) | `desktop/vX.Y.Z-<channel>` |
-| **Web** | Reserved (none yet) | `web/vX.Y.Z-<channel>` |
+> **Beta** — Apache-2.0 license; VERSIONING.md; GNOME Shell surface naming.
 
-Surfaces are versioned **independently**. Changelog headings name the surface, e.g. `## [CLI 0.1.1-beta]`.
+### Changed
 
-### Release channels (`x.y.z-<channel>`)
-
-| Channel | Tag example | Meaning |
-|---------|-------------|---------|
-| **alpha** | `cli/v0.1.0-alpha` | Extremely early. Features incomplete; bugs are expected and common. |
-| **beta** | `cli/v0.1.1-beta` | Feature set nearly complete, but still rough — bugs and hard edges remain. |
-| **stable** | `cli/v0.2.0-stable` | Production-ready: finished for that version, few or no known bugs. |
-
-**CLI** tags (`cli/v*`) publish to crates.io + AUR. Desktop/Web tags are changelog / companion artifacts unless explicitly promoted.
+- License is **Apache-2.0** (was MIT).
+- Versioning docs live in [VERSIONING.md](VERSIONING.md); changelog points there.
+- Companion surface renamed to **GNOME Shell** (`gnome/v*`); web surface removed from the scheme.
+- Repo/docs references use [optionMusic](https://github.com/fireflylabss/optionMusic) (not optMusic).
 
 ## [CLI 0.1.1-beta] - 2026-07-31
 
@@ -48,7 +39,7 @@ Surfaces are versioned **independently**. Changelog headings name the surface, e
 - `usg completions <shell>` via clap_complete.
 - crates.io + AUR packaging (`packaging/aur/`); tags `cli/v*`.
 
-## [Desktop 0.1.0-beta] - 2026-07-28
+## [GNOME Shell 0.1.0-beta] - 2026-07-28
 
 > **Beta** companion — GNOME Shell top-bar meters. Prefer the CLI for day-to-day use.
 
@@ -66,7 +57,7 @@ Surfaces are versioned **independently**. Changelog headings name the surface, e
 
 **CLI (Rust)**
 
-- Terminal meters for Codex, Cursor, Antigravity, Claude, and Grok — black & white panel inspired by optMusic (`◈ usagenometer`).
+- Terminal meters for Codex, Cursor, Antigravity, Claude, and Grok — black & white panel inspired by [optionMusic](https://github.com/fireflylabss/optionMusic) (`◈ usagenometer`).
 - Binaries `usagenometer` and short alias `usg` (clap help, quiet banner, `--json` / `--pretty`).
 - Commands: `status` (`st` / `s`, default), `watch` (`w`), `test` (`t`), `providers` (`ls`), `json` (`j`), `version`.
 - Filters `-p` / `--provider`, display mode `--display left|used`.

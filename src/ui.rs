@@ -1,4 +1,4 @@
-//! Terminal UI — black & white, compact (optMusic-inspired).
+//! Terminal UI — black & white, compact (optionMusic-inspired).
 
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};

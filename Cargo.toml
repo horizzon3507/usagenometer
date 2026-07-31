@@ -1,11 +1,11 @@
 [package]
 name = "usagenometer"
-version = "0.1.1-beta"
+version = "0.1.2-beta"
 edition = "2024"
 rust-version = "1.85"
 description = "usagenometer — AI usage meters in the terminal"
 authors = ["horizzon3507 <148660626+horizzon3507@users.noreply.github.com>"]
-license = "MIT"
+license = "Apache-2.0"
 readme = "README.md"
 homepage = "https://github.com/horizzon3507/usagenometer"
 repository = "https://github.com/horizzon3507/usagenometer"

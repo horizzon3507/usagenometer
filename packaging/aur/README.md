@@ -1,8 +1,6 @@
 # AUR packaging (`usagenometer`)
 
-Same setup as opsh / optionMusic: one SSH key secret, username hardcoded in CI.
-
-Published: https://aur.archlinux.org/packages/usagenometer (after first `cli/v*` tag)
+Published: https://aur.archlinux.org/packages/usagenometer
 
 ## Install
 
@@ -16,11 +14,12 @@ Also: `cargo install usagenometer` (crates.io).
 
 ## Tag scheme
 
+See [VERSIONING.md](../../VERSIONING.md). Summary:
+
 | Surface | Tag | Publishes |
 |---------|-----|-----------|
 | CLI | `cli/vX.Y.Z-alpha\|beta\|stable` | crates.io + AUR + GH Release |
-| Desktop | `desktop/vX.Y.Z-…` | companion / changelog (GNOME extension) |
-| Web | `web/vX.Y.Z-…` | reserved |
+| GNOME Shell | `gnome/vX.Y.Z-…` | companion / changelog |
 
 Arch `pkgver` cannot contain `-`, so `0.1.1-beta` becomes `0.1.1_beta` in the PKGBUILD while the Git tag keeps the SemVer channel.
 
