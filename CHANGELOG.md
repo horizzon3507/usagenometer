@@ -4,15 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with an explicit **release channel** suffix (same scheme as [optMusic](https://github.com/fireflylabss/optMusic)).
 
+### Surfaces + tags
+
+| Surface | What it is | Git tag |
+|---------|------------|---------|
+| **CLI** | `usagenometer` / `usg` (Rust) — primary | `cli/vX.Y.Z-<channel>` |
+| **Desktop** | GNOME Shell extension (companion) | `desktop/vX.Y.Z-<channel>` |
+| **Web** | Reserved (none yet) | `web/vX.Y.Z-<channel>` |
+
+Surfaces are versioned **independently**. Changelog headings name the surface, e.g. `## [CLI 0.1.1-beta]`.
+
 ### Release channels (`x.y.z-<channel>`)
 
 | Channel | Tag example | Meaning |
 |---------|-------------|---------|
-| **alpha** | `0.1.0-alpha` | Extremely early. Features incomplete; bugs are expected and common. |
-| **beta** | `0.1.0-beta` | Feature set nearly complete, but still rough — bugs and hard edges remain. |
-| **stable** | `0.2.0-stable` | Production-ready: finished for that version, few or no known bugs. |
+| **alpha** | `cli/v0.1.0-alpha` | Extremely early. Features incomplete; bugs are expected and common. |
+| **beta** | `cli/v0.1.1-beta` | Feature set nearly complete, but still rough — bugs and hard edges remain. |
+| **stable** | `cli/v0.2.0-stable` | Production-ready: finished for that version, few or no known bugs. |
 
-The **CLI** (`usagenometer` / `usg`) is the primary surface. The **GNOME Shell extension** ships in-tree as a **beta** companion — not the default install path.
+**CLI** tags (`cli/v*`) publish to crates.io + AUR. Desktop/Web tags are changelog / companion artifacts unless explicitly promoted.
 
 ## [CLI 0.1.1-beta] - 2026-07-31
 
@@ -36,6 +46,17 @@ The **CLI** (`usagenometer` / `usg`) is the primary surface. The **GNOME Shell e
 - Privacy mode (`--privacy` / config) redacts account identifiers in status, watch, history, doctor, JSON.
 - Interactive `usg tui` (ratatui; `q` / `r` / `j`/`k`).
 - `usg completions <shell>` via clap_complete.
+- crates.io + AUR packaging (`packaging/aur/`); tags `cli/v*`.
+
+## [Desktop 0.1.0-beta] - 2026-07-28
+
+> **Beta** companion — GNOME Shell top-bar meters. Prefer the CLI for day-to-day use.
+
+### Added
+
+- Multi-provider top-bar meters + prefs connection tests.
+- Claude / Grok provider modules aligned with CLI OAuth / billing sources.
+- Extension metadata / panel label mark the GNOME UI as beta.
 
 ## [CLI 0.1.0-beta] - 2026-07-28
 
@@ -55,15 +76,9 @@ The **CLI** (`usagenometer` / `usg`) is the primary surface. The **GNOME Shell e
 - Claude: Anthropic OAuth `GET /api/oauth/usage` from `~/.claude/.credentials.json` (or `Claude Code-credentials` keyring); falls back to Antigravity `3p-*` pools when OAuth is absent but Antigravity is logged in.
 - Grok: OIDC session from `~/.grok/auth.json` → `cli-chat-proxy.grok.com` `/v1/user` + `/v1/billing` (weekly credits / product % / monthly fallback).
 
-**GNOME Shell extension (beta)**
-
-- Multi-provider top-bar meters + prefs connection tests (existing panel work).
-- Claude / Grok provider modules updated to the same OAuth / billing sources as the CLI.
-
 ### Changed
 
 - README leads with the CLI; GNOME install is documented as **beta**.
-- Extension metadata / panel label mark the GNOME UI as beta.
 
 ### Notes
 

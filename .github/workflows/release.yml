@@ -1,0 +1,116 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "cli/v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. cli/v0.1.1-beta)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            cli/v*) ;;
+            *)
+              echo "Expected cli/vX.Y.Z-<channel>, got: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          VERSION="${TAG#cli/v}"
+          echo "name=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  aur:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Bump PKGBUILD + .SRCINFO
+        run: |
+          chmod +x packaging/aur/bump.sh
+          ./packaging/aur/bump.sh "${{ needs.resolve.outputs.tag }}"
+
+      - name: Commit packaging bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
+          if git diff --cached --quiet; then
+            echo "packaging already up to date"
+          else
+            git commit -m "chore(aur): bump CLI to ${{ needs.resolve.outputs.version }}"
+            git push origin HEAD:main
+          fi
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: usagenometer
+          pkgbuild: ./packaging/aur/PKGBUILD
+          commit_username: horizzon3507
+          commit_email: horizzon3507@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ needs.resolve.outputs.version }}
+
+  crates-io:
+    needs: resolve
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify crate version matches tag
+        run: |
+          CRATE_VER="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="usagenometer") | .version')"
+          test "$CRATE_VER" = "${{ needs.resolve.outputs.version }}"
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "Missing secret CARGO_REGISTRY_TOKEN" >&2
+            exit 1
+          fi
+          set +e
+          output="$(cargo publish --locked 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if printf '%s\n' "$output" | grep -qi 'already exists'; then
+            echo "Version already on crates.io — treating as success"
+            exit 0
+          fi
+          exit "$status"

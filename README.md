@@ -17,19 +17,34 @@ Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity) and pr
 
 ## Install
 
-### Build from source
-
 ```bash
-cargo install --path . --force
+# crates.io
+cargo install usagenometer
+
+# AUR
+yay -S usagenometer
 # or
-cargo build --release
-# binaries: target/release/usagenometer  target/release/usg
+paru -S usagenometer
+
+# from source
+cargo install --path . --force
+# binaries: usagenometer · usg
 ```
 
 | Command | Description |
 |---------|-------------|
 | `usagenometer` | full name |
 | `usg` | short alias |
+
+### Version tags
+
+| Surface | Tag | Ships |
+|---------|-----|-------|
+| **CLI** | `cli/vX.Y.Z-alpha\|beta\|stable` | crates.io + AUR + GitHub Release |
+| **Desktop** | `desktop/vX.Y.Z-…` | GNOME Shell extension (companion) |
+| **Web** | `web/vX.Y.Z-…` | reserved |
+
+See [CHANGELOG.md](CHANGELOG.md) and [packaging/aur/README.md](packaging/aur/README.md).
 
 ## Usage
 
