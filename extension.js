@@ -242,7 +242,9 @@ class UsagenometerIndicator extends PanelMenu.Button {
 
     _getPrimaryProvider() {
         const value = this._settings.get_string('primary-provider');
-        return Object.values(PROVIDER_IDS).includes(value) ? value : PROVIDER_IDS.CURSOR;
+        if (value && /^[a-z][a-z0-9_-]*$/.test(value))
+            return value;
+        return PROVIDER_IDS.CURSOR;
     }
 
     _getEnabledProviders() {
@@ -556,8 +558,14 @@ function formatProviderSummary(provider, displayMode) {
 }
 
 function formatProviderMeta(provider) {
-    if (provider.status === 'ok')
-        return `${provider.meters.length} ${_('meters')}`;
+    if (provider.status === 'ok') {
+        const base = `${provider.meters.length} ${_('meters')}`;
+        if (provider.staleAgeSecs != null && provider.staleAgeSecs > 0) {
+            const mins = Math.max(1, Math.round(provider.staleAgeSecs / 60));
+            return `${base} · ${_('stale')} ${mins}m`;
+        }
+        return base;
+    }
     return provider.status;
 }
 

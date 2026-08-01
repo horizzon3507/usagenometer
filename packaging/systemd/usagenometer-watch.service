@@ -1,0 +1,11 @@
+[Unit]
+Description=usagenometer watch (foreground meters + alerts)
+Documentation=https://github.com/horizzon3507/usagenometer
+# Prefer the oneshot timer (usagenometer-alert.*) for notify-only.
+# Use this service only if you want a long-running watch process.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/usg watch --interval 300 --alert 80 --alert-eta 2 --notify -q
+Restart=on-failure
+RestartSec=30

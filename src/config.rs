@@ -24,6 +24,8 @@ pub struct ConfigFile {
     pub display: Option<String>,
     /// Global alert threshold as used percent 0–100 (e.g. 80 = warn at ≥80% used).
     pub alert: Option<f64>,
+    /// Alert when exhaustion ETA is at or below this many hours (needs history).
+    pub alert_eta: Option<f64>,
     /// Per-provider alert thresholds (used %).
     pub alerts: HashMap<String, f64>,
     /// Hide/redact account emails.
@@ -51,6 +53,7 @@ impl Default for ConfigFile {
             watch_interval: None,
             display: None,
             alert: None,
+            alert_eta: None,
             alerts: HashMap::new(),
             privacy: false,
             compact: false,
@@ -138,6 +141,8 @@ pub struct Settings {
     pub format: Option<crate::cli::OutputFormat>,
     /// Global CLI alert override (used %).
     pub alert: Option<f64>,
+    /// Alert when ETA ≤ this many hours (CLI overrides config).
+    pub alert_eta: Option<f64>,
     pub notify: bool,
     pub cache_ttl: u64,
     pub history: bool,
@@ -149,6 +154,13 @@ impl Settings {
     pub fn alert_for(&self, provider_id: &str) -> Option<f64> {
         self.alert
             .or_else(|| self.config.alert_for(provider_id))
+    }
+
+    /// Hours until exhaustion; CLI flag overrides config.
+    pub fn alert_eta_hours(&self) -> Option<f64> {
+        self.alert_eta
+            .or(self.config.alert_eta)
+            .filter(|v| v.is_finite() && *v >= 0.0)
     }
 
     pub fn dump_toml(&self) -> String {
@@ -168,6 +180,9 @@ impl Settings {
         effective.watch_interval = Some(self.watch_interval);
         if let Some(a) = self.alert {
             effective.alert = Some(a);
+        }
+        if let Some(h) = self.alert_eta {
+            effective.alert_eta = Some(h);
         }
         toml::to_string_pretty(&effective).unwrap_or_else(|_| String::new())
     }

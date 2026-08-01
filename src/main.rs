@@ -127,6 +127,7 @@ fn build_settings(cli: &Cli) -> Settings {
     let privacy = cli.privacy || config.privacy;
     let notify = cli.notify || config.notify;
     let alert = cli.alert.or(config.alert);
+    let alert_eta = cli.alert_eta.or(config.alert_eta);
     let json = cli.json || matches!(cli.format, Some(OutputFormat::Json));
     Settings {
         providers,
@@ -138,6 +139,7 @@ fn build_settings(cli: &Cli) -> Settings {
         pretty: cli.pretty,
         format: cli.format,
         alert,
+        alert_eta,
         notify,
         cache_ttl: config.cache_ttl_secs(),
         history: config.history,
@@ -192,9 +194,13 @@ fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
         banner();
     }
 
-    let etas = HistoryStore::open()
-        .ok()
-        .map(|h| eta::eta_map_from_history(&h, &snaps));
+    let history = HistoryStore::open().ok();
+    let etas = history
+        .as_ref()
+        .map(|h| eta::eta_map_from_history(h, &snaps));
+    let eta_secs = history
+        .as_ref()
+        .map(|h| eta::eta_seconds_from_history(h, &snaps));
     print_status_opts(
         &snaps,
         &StatusOptions {
@@ -204,7 +210,7 @@ fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
         },
     );
 
-    let events = alerts::evaluate(&snaps, settings);
+    let events = alerts::evaluate(&snaps, settings, eta_secs.as_ref());
     alerts::print_alerts(&events, settings.quiet);
     alerts::maybe_notify(&events, settings.notify);
 
@@ -292,7 +298,10 @@ fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
             }
         }
 
-        let events = tracker.filter_new(alerts::evaluate(&snaps, settings));
+        let eta_secs = HistoryStore::open()
+            .ok()
+            .map(|h| eta::eta_seconds_from_history(&h, &snaps));
+        let events = tracker.filter_new(alerts::evaluate(&snaps, settings, eta_secs.as_ref()));
         alerts::print_alerts(&events, settings.quiet);
         alerts::maybe_notify(&events, settings.notify);
 

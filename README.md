@@ -1,7 +1,7 @@
 # ◈ usagenometer
 
 **usagenometer** — AI usage meters in the terminal.  
-Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity) and prints compact black & white quotas — no secrets stored by the tool.
+Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity, Claude, Grok) and prints compact black & white quotas — no secrets stored by the tool.
 
 ```
 ◈  usagenometer
@@ -49,9 +49,9 @@ See [VERSIONING.md](VERSIONING.md), [CHANGELOG.md](CHANGELOG.md), and [packaging
 
 ```bash
 usg                         # status (default)
-usg -c                      # compact one-liner (statuslines)
+usg -c -q                   # compact one-liner (statuslines)
 usg status -p codex -p cursor
-usg watch --interval 60 --alert 80 --diff
+usg watch --interval 60 --alert 80 --alert-eta 2 --diff
 usg check --fail-under 10   # exit 2 if remaining % below threshold
 usg test
 usg doctor                  # auth paths / expiry (no secrets)
@@ -74,6 +74,7 @@ usg --help
 | `-c` / `--compact` | One-liner: `Codex 42% · Cursor 74%` |
 | `--privacy` | Redact account emails / identifiers |
 | `--alert PCT` | Warn when used % ≥ PCT (also `watch --alert`) |
+| `--alert-eta HOURS` | Warn when exhaustion ETA ≤ HOURS (needs history) |
 | `--notify` | Desktop `notify-send` on alerts (best-effort) |
 | `--json` / `--pretty` | Machine-readable JSON |
 | `--format text\|json\|prometheus` | Output format |
@@ -107,6 +108,7 @@ provider_order = ["codex", "cursor", "claude", "antigravity", "grok"]
 watch_interval = 60
 display = "left"               # or "used"
 alert = 80                     # global used-% threshold
+alert_eta = 2                  # hours until exhaustion (optional)
 privacy = false
 compact = false
 notify = false
@@ -125,10 +127,16 @@ Data / cache:
 | `~/.local/share/usagenometer/history.sqlite3` | Snapshot history |
 | `~/.cache/usagenometer/snapshots/` | Short cache for stale fallback |
 
-### Scripting notes
+### Statuslines
+
+Compact output for prompts and bars: `usg -c -q`. Ready snippets for Starship, oh-my-posh, fish, bash, and zsh → **[docs/statusline.md](docs/statusline.md)**.
+
+### Scripting & ops
 
 - `usg check --fail-under 10` — **fail when remaining &lt; 10%** (used &gt; 90%). Exit `2` on failure.
 - `usg --format prometheus` — Prometheus text exposition (`usagenometer_used_ratio`, `usagenometer_left_ratio`, `usagenometer_up`).
+- `usg json` + `jq` recipes, CI gates, Prometheus scrape, systemd user timers → **[docs/ops.md](docs/ops.md)**.
+- Example units: [`packaging/systemd/`](packaging/systemd/).
 - Compact mode skips routing hints; quiet/compact skip banners.
 
 ### Shell completions
@@ -151,17 +159,17 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 
 Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
+Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
+
 ## GNOME Shell extension (beta)
 
-The top-bar GNOME extension in this repo is **beta**. Prefer the CLI for day-to-day use. Compatible with GNOME Shell `45`–`50`.
+The top-bar extension is a **thin client**: it runs `usg json` / `usg test` and renders the panel. Install the CLI on PATH first. Compatible with GNOME Shell `45`–`50`.
 
 ```fish
 cd ~/usagenometer
 
 gnome-extensions pack --force \
-  --extra-source=codexAuth.js \
   --extra-source=constants.js \
-  --extra-source=usageApi.js \
   --extra-source=lib \
   --extra-source=providers \
   --extra-source=icons \
@@ -182,16 +190,18 @@ gnome-extensions prefs usagenometer@horizzon3507
 
 ```bash
 cargo test
-gjs -m tests/usageApi.test.js
+gjs -m tests/cliClient.test.js
 ```
 
 ## Layout
 
 ```
 src/                  # Rust CLI (usagenometer / usg)
-extension.js          # GNOME panel + menu (beta)
+extension.js          # GNOME panel + menu (beta thin client)
 prefs.js              # GNOME settings UI (beta)
-providers/            # GNOME JS providers (beta)
+providers/            # GNOME CLI bridge + types (no per-provider fetch)
+docs/                 # statusline, ops, adding-providers
+packaging/systemd/    # user timer examples for alerts
 ```
 
 ## Notes
@@ -200,3 +210,4 @@ providers/            # GNOME JS providers (beta)
 - On API failure, a recent cached snapshot may show as `(stale Xm)` when available.
 - Cursor and Antigravity private APIs can change; failures stay per-provider.
 - Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after extension install.
+- License: **Apache-2.0**.

@@ -1,6 +1,6 @@
 [package]
 name = "usagenometer"
-version = "0.1.2-beta"
+version = "0.1.3-beta"
 edition = "2024"
 rust-version = "1.85"
 description = "usagenometer — AI usage meters in the terminal"

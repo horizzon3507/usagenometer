@@ -1,6 +1,5 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 
@@ -19,6 +18,7 @@ import {
     PROVIDER_LABELS,
     listProviderDefs,
     normalizeEnabledProviders,
+    resolveCliBinary,
     testProvider,
 } from './providers/registry.js';
 
@@ -31,9 +31,29 @@ class UsagenometerPreferencesPage extends Adw.PreferencesPage {
         });
 
         this._settings = settings;
+        /** @type {{id: string, label: string}[]} */
+        this._providerDefs = listProviderDefs();
         this.add(this._buildGeneralGroup());
+        this.add(this._buildCliGroup());
         this.add(this._buildProvidersGroup());
         this.add(this._buildConnectionGroup());
+    }
+
+    _buildCliGroup() {
+        const bin = resolveCliBinary();
+        const group = new Adw.PreferencesGroup({
+            title: _('CLI backend'),
+            description: bin
+                ? _('Panel meters are provided by the usagenometer CLI (usg json).')
+                : _('Install the usagenometer CLI (usg) on PATH — the extension shells out to it for all provider data.'),
+        });
+
+        const row = new Adw.ActionRow({
+            title: _('Binary'),
+            subtitle: bin || _('Not found on PATH (usg / usagenometer)'),
+        });
+        group.add(row);
+        return group;
     }
 
     _buildGeneralGroup() {
@@ -112,11 +132,11 @@ class UsagenometerPreferencesPage extends Adw.PreferencesPage {
     _buildProvidersGroup() {
         const group = new Adw.PreferencesGroup({
             title: _('Providers'),
-            description: _('Enable the AI usage sources Usagenometer should poll.'),
+            description: _('Enable sources polled via usg json. New CLI providers appear automatically.'),
         });
 
         const enabled = new Set(this._getEnabledProviders());
-        for (const def of listProviderDefs()) {
+        for (const def of this._providerDefs) {
             const row = new Adw.SwitchRow({
                 title: def.label,
                 subtitle: providerSubtitle(def.id),
@@ -134,10 +154,10 @@ class UsagenometerPreferencesPage extends Adw.PreferencesPage {
     _buildConnectionGroup() {
         const group = new Adw.PreferencesGroup({
             title: _('Connection tests'),
-            description: _('Probe local auth and the provider APIs without changing settings.'),
+            description: _('Runs usg test -p <provider> (requires the CLI on PATH).'),
         });
 
-        for (const def of listProviderDefs()) {
+        for (const def of this._providerDefs) {
             const row = new Adw.ActionRow({
                 title: def.label,
                 subtitle: _('Not checked yet.'),
@@ -198,7 +218,7 @@ class UsagenometerPreferencesPage extends Adw.PreferencesPage {
         else
             current.delete(providerId);
 
-        const ordered = Object.values(PROVIDER_IDS).filter(id => current.has(id));
+        const ordered = normalizeEnabledProviders([...current]);
         this._settings.set_strv(
             'enabled-providers',
             ordered.length > 0 ? ordered : [...DEFAULT_ENABLED_PROVIDERS],
@@ -216,16 +236,16 @@ export default class UsagenometerPreferences extends ExtensionPreferences {
 function providerSubtitle(id) {
     switch (id) {
     case PROVIDER_IDS.CODEX:
-        return _('Local Codex CLI auth (~/.codex/auth.json)');
+        return _('Codex CLI auth (~/.codex/auth.json) · 5h / weekly meters via usg');
     case PROVIDER_IDS.CURSOR:
-        return _('Cursor app session (state.vscdb) · Auto+Composer and API pools');
+        return _('Cursor session · Auto+Composer and API pools via usg');
     case PROVIDER_IDS.ANTIGRAVITY:
-        return _('Antigravity secret-store OAuth · Gemini and Claude/GPT quotas');
+        return _('Antigravity OAuth · Gemini and Claude/GPT quotas via usg');
     case PROVIDER_IDS.CLAUDE:
-        return _('Claude CLI detected · quota details are available inside Claude with /usage');
+        return _('Claude OAuth usage (or Antigravity 3p-* fallback) via usg');
     case PROVIDER_IDS.GROK:
-        return _('Grok CLI detected · no local quota endpoint is exposed');
+        return _('Grok billing / weekly credits via usg');
     default:
-        return '';
+        return _('Provided by the usagenometer CLI');
     }
 }

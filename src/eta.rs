@@ -85,16 +85,24 @@ pub fn eta_map_from_history(
     history: &crate::history::HistoryStore,
     snaps: &[ProviderSnapshot],
 ) -> HashMap<String, String> {
+    eta_seconds_from_history(history, snaps)
+        .into_iter()
+        .map(|(k, secs)| (k, format_eta(secs)))
+        .collect()
+}
+
+/// Raw ETA seconds keyed by `"provider_id/meter_id"` (for alerts).
+pub fn eta_seconds_from_history(
+    history: &crate::history::HistoryStore,
+    snaps: &[ProviderSnapshot],
+) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     for snap in snaps {
         if let Ok(points) = history.recent_meter_points(&snap.id, 24) {
             for eta in etas_for_provider(&snap.id, &points) {
                 if let Some(secs) = eta.seconds {
                     if eta.samples >= 2 {
-                        map.insert(
-                            format!("{}/{}", eta.provider_id, eta.meter_id),
-                            format_eta(secs),
-                        );
+                        map.insert(format!("{}/{}", eta.provider_id, eta.meter_id), secs);
                     }
                 }
             }

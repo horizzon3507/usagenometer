@@ -173,6 +173,15 @@ pub struct Cli {
     )]
     pub alert: Option<f64>,
 
+    /// Alert when exhaustion ETA is within this many hours (needs history samples)
+    #[arg(
+        long = "alert-eta",
+        global = true,
+        value_name = "HOURS",
+        help = "Warn when ETA <= HOURS (needs history)"
+    )]
+    pub alert_eta: Option<f64>,
+
     /// Enable desktop notify-send for alerts
     #[arg(
         long = "notify",

@@ -1,0 +1,11 @@
+[Unit]
+Description=usagenometer quota check + notify
+Documentation=https://github.com/horizzon3507/usagenometer
+
+[Service]
+Type=oneshot
+# Used-% alert + ETA alert (needs a few prior history samples from status/watch).
+# Adjust thresholds in ~/.config/usagenometer/config.toml or via flags.
+ExecStart=/usr/bin/usg -q --alert 80 --alert-eta 2 --notify status
+# Fallback if only the long binary is installed:
+# ExecStart=/usr/bin/usagenometer -q --alert 80 --alert-eta 2 --notify status

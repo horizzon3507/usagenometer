@@ -2,7 +2,7 @@
 pkgname=usagenometer
 # Arch forbids hyphens in pkgver; keep the real SemVer+channel in _pkgver.
 _surface=cli
-_pkgver=0.1.2-beta
+_pkgver=0.1.3-beta
 pkgver=${_pkgver//-/_}
 pkgrel=1
 pkgdesc='AI usage meters in the terminal (Codex, Cursor, Antigravity, Claude, Grok)'

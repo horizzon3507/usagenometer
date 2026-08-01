@@ -47,7 +47,55 @@ export const DEFAULT_ENABLED_PROVIDERS = Object.freeze([
  * @property {string|null} plan
  * @property {UsageMeter[]} meters
  * @property {object|null} raw
+ * @property {number|null} [staleAgeSecs] CLI cache age when serving stale data
  */
+
+/**
+ * Map snake_case CLI JSON (`usg json`) into the camelCase UI snapshot shape.
+ * @param {object} raw
+ * @returns {ProviderSnapshot}
+ */
+export function normalizeCliSnapshot(raw) {
+    const id = String(raw?.id ?? 'unknown');
+    const label = String(raw?.label ?? PROVIDER_LABELS[id] ?? id);
+    const meters = Array.isArray(raw?.meters)
+        ? raw.meters.map(m => createMeter({
+            id: String(m?.id ?? 'meter'),
+            title: String(m?.title ?? m?.id ?? 'Meter'),
+            used: m?.used ?? null,
+            left: m?.left ?? null,
+            limit: m?.limit ?? null,
+            percent: m?.percent ?? null,
+            leftPercent: m?.left_percent ?? m?.leftPercent ?? null,
+            unit: m?.unit ?? 'percent',
+            resetAt: m?.reset_at ?? m?.resetAt ?? null,
+            resetAfterSeconds: m?.reset_after_seconds ?? m?.resetAfterSeconds ?? null,
+            windowSeconds: m?.window_seconds ?? m?.windowSeconds ?? null,
+        }))
+        : [];
+
+    const snap = createSnapshot({
+        id,
+        label,
+        status: normalizeStatus(raw?.status),
+        error: raw?.error ?? null,
+        account: raw?.account ?? null,
+        plan: raw?.plan ?? null,
+        meters,
+        raw: null,
+    });
+    const stale = coerceNumber(raw?.stale_age_secs ?? raw?.staleAgeSecs);
+    if (stale !== null)
+        snap.staleAgeSecs = stale;
+    return snap;
+}
+
+function normalizeStatus(value) {
+    const s = String(value ?? 'ok').toLowerCase();
+    if (s === 'ok' || s === 'auth' || s === 'error' || s === 'disabled')
+        return s;
+    return 'error';
+}
 
 /**
  * @param {Partial<ProviderSnapshot> & {id: string, label: string}} partial

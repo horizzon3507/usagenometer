@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 Versioning, surfaces, channels, and tag format: see [VERSIONING.md](VERSIONING.md).
 
+## [CLI 0.1.3-beta] - 2026-08-01
+
+> **Beta** — GNOME thin client over `usg json`; ETA alerts; statusline / ops docs.
+
+### Added
+
+- `--alert-eta HOURS` / config `alert_eta` — warn when history-based exhaustion ETA is within N hours (works with `--notify` / watch).
+- Example systemd user units under [`packaging/systemd/`](packaging/systemd/) for periodic check+notify.
+- Docs: [statusline integrations](docs/statusline.md), [ops/scripting](docs/ops.md), [adding providers](docs/adding-providers.md).
+- CI workflow [`.github/workflows/test.yml`](.github/workflows/test.yml) — `cargo test` + GNOME JS normalizer tests on PRs.
+
+### Changed
+
+- Routing hints include remaining % (e.g. `Codex (8%) low → try Cursor (80%)`).
+
+## [GNOME Shell 0.1.3-beta] - 2026-08-01
+
+> **Beta** companion — thin client over the CLI; no duplicated provider fetch stack.
+
+### Changed
+
+- Extension shells out to `usg` / `usagenometer` (`json`, `test`, `providers`) instead of JS HTTP/auth providers.
+- Prefs copy for Claude / Grok matches CLI quota support; shows CLI binary path.
+- Pack list shrinks (no `usageApi.js` / per-provider fetch modules).
+- `metadata.json` version → `3`.
+
+### Removed
+
+- Duplicated GNOME JS provider fetch/auth modules (`providers/{codex,cursor,antigravity,cli}`, `usageApi.js`, `codexAuth.js`, `lib/http.js`).
+
 ## [CLI 0.1.2-beta] - 2026-07-31
 
 > **Beta** — Apache-2.0 license; VERSIONING.md; GNOME Shell surface naming.

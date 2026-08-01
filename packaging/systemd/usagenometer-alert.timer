@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic usagenometer quota alerts
+Documentation=https://github.com/horizzon3507/usagenometer
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=15m
+Persistent=true
+Unit=usagenometer-alert.service
+
+[Install]
+WantedBy=timers.target

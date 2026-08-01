@@ -26,9 +26,13 @@ fn worst_left(snap: &ProviderSnapshot) -> Option<f64> {
     best
 }
 
+fn pct_label(left: f64) -> String {
+    format!("{:.0}%", (left * 100.0).clamp(0.0, 100.0))
+}
+
 pub fn compute(snaps: &[ProviderSnapshot]) -> Option<RoutingHint> {
-    let mut low: Vec<&ProviderSnapshot> = Vec::new();
-    let mut headroom: Vec<&ProviderSnapshot> = Vec::new();
+    let mut low: Vec<(&ProviderSnapshot, f64)> = Vec::new();
+    let mut headroom: Vec<(&ProviderSnapshot, f64)> = Vec::new();
 
     for snap in snaps {
         if snap.status != SnapshotStatus::Ok || snap.meters.is_empty() {
@@ -38,9 +42,9 @@ pub fn compute(snaps: &[ProviderSnapshot]) -> Option<RoutingHint> {
             continue;
         };
         if left < LOW_REMAINING {
-            low.push(snap);
+            low.push((snap, left));
         } else if left >= HEADROOM {
-            headroom.push(snap);
+            headroom.push((snap, left));
         }
     }
 
@@ -48,8 +52,14 @@ pub fn compute(snaps: &[ProviderSnapshot]) -> Option<RoutingHint> {
         return None;
     }
 
-    let low_names: Vec<&str> = low.iter().map(|s| s.label.as_str()).collect();
-    let alt_names: Vec<&str> = headroom.iter().map(|s| s.label.as_str()).collect();
+    let low_names: Vec<String> = low
+        .iter()
+        .map(|(s, left)| format!("{} ({})", s.label, pct_label(*left)))
+        .collect();
+    let alt_names: Vec<String> = headroom
+        .iter()
+        .map(|(s, left)| format!("{} ({})", s.label, pct_label(*left)))
+        .collect();
     let message = format!(
         "{} low → try {}",
         low_names.join(" / "),
@@ -74,5 +84,7 @@ mod tests {
         let hint = compute(&[low, ok]).unwrap();
         assert!(hint.message.contains("Codex"));
         assert!(hint.message.contains("Cursor"));
+        assert!(hint.message.contains("8%"));
+        assert!(hint.message.contains("80%"));
     }
 }
