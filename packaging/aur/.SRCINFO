@@ -12,6 +12,6 @@ pkgbase = usagenometer
 	optdepends = libnotify: desktop notifications for usg --notify / --alert
 	options = !lto
 	source = usagenometer-0.1.3_beta.tar.gz::https://github.com/horizzon3507/usagenometer/archive/refs/tags/cli/v0.1.3-beta.tar.gz
-	sha256sums = SKIP
+	sha256sums = affc98d9adad83dc54448ee39c760f73ba085e54be8686f997e8f9739135e64f
 
 pkgname = usagenometer
