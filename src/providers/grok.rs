@@ -59,9 +59,7 @@ fn fetch_inner(client: &HttpClient) -> Result<ProviderSnapshot, FetchErr> {
         ("X-XAI-Token-Auth", "xai-grok-cli"),
     ];
 
-    let user: Value = client
-        .get_json(USER_URL, &headers_base)
-        .map_err(map_http)?;
+    let user: Value = client.get_json(USER_URL, &headers_base).map_err(map_http)?;
 
     let user_id = user
         .get("userId")
@@ -253,9 +251,7 @@ pub fn snapshot_from_billing(
         let mcfg = monthly.get("config").unwrap_or(monthly);
         let used = mcfg.pointer("/used/val").and_then(|v| v.as_f64());
         let limit = mcfg.pointer("/monthlyLimit/val").and_then(|v| v.as_f64());
-        let reset_at = mcfg
-            .get("billingPeriodEnd")
-            .and_then(coerce_unix_seconds);
+        let reset_at = mcfg.get("billingPeriodEnd").and_then(coerce_unix_seconds);
         if let (Some(u), Some(l)) = (used, limit) {
             if l > 0.0 {
                 meters.push(create_meter(
@@ -323,9 +319,7 @@ fn humanize_product(name: &str) -> String {
 
 fn which(command: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
-        })
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).is_file()))
         .unwrap_or(false)
 }
 

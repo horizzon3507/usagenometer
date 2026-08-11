@@ -108,7 +108,8 @@ fn load_oauth_auth() -> Result<Auth, String> {
         .map(normalize_bearer)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
-            "Claude OAuth credentials found but access token is missing. Run claude login.".to_string()
+            "Claude OAuth credentials found but access token is missing. Run claude login."
+                .to_string()
         })?;
 
     if let Some(exp_ms) = oauth.get("expiresAt").and_then(|v| v.as_f64()) {
@@ -162,9 +163,8 @@ fn read_credentials_payload() -> Result<Value, String> {
     {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !text.is_empty() {
-            return serde_json::from_str(&text).map_err(|_| {
-                "Claude keyring credentials are not valid JSON.".to_string()
-            });
+            return serde_json::from_str(&text)
+                .map_err(|_| "Claude keyring credentials are not valid JSON.".to_string());
         }
     }
 
@@ -191,18 +191,8 @@ pub fn snapshot_from_oauth_usage(summary: &Value, auth: &Auth) -> ProviderSnapsh
     let mut meters = Vec::new();
 
     // Legacy flat buckets
-    push_util_bucket(
-        &mut meters,
-        summary.get("five_hour"),
-        "five_hour",
-        "5 hour",
-    );
-    push_util_bucket(
-        &mut meters,
-        summary.get("seven_day"),
-        "seven_day",
-        "Weekly",
-    );
+    push_util_bucket(&mut meters, summary.get("five_hour"), "five_hour", "5 hour");
+    push_util_bucket(&mut meters, summary.get("seven_day"), "seven_day", "Weekly");
     push_util_bucket(
         &mut meters,
         summary.get("seven_day_sonnet"),
@@ -294,7 +284,12 @@ pub fn snapshot_from_oauth_usage(summary: &Value, auth: &Auth) -> ProviderSnapsh
     }
 }
 
-fn push_util_bucket(meters: &mut Vec<crate::providers::types::UsageMeter>, value: Option<&Value>, id: &str, title: &str) {
+fn push_util_bucket(
+    meters: &mut Vec<crate::providers::types::UsageMeter>,
+    value: Option<&Value>,
+    id: &str,
+    title: &str,
+) {
     let Some(value) = value.filter(|v| !v.is_null()) else {
         return;
     };
@@ -307,9 +302,7 @@ fn push_util_bucket(meters: &mut Vec<crate::providers::types::UsageMeter>, value
 
 fn which(command: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
-        })
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).is_file()))
         .unwrap_or(false)
 }
 

@@ -1,6 +1,6 @@
 # Versioning
 
-This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with an explicit **release channel** suffix, and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with an explicit **release channel** suffix. Public changelog headings follow the Option style: a leading `v`, a `DD/MM/YYYY` date, and one human summary sentence.
 
 ## Surfaces + tags
 
@@ -9,7 +9,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) wit
 | **CLI** | `usagenometer` / `usg` (Rust) — primary | `cli/vX.Y.Z-<channel>` |
 | **GNOME Shell** | GNOME Shell extension (companion) | `gnome/vX.Y.Z-<channel>` |
 
-Surfaces are versioned **independently**. Changelog headings name the surface, e.g. `## [CLI 0.1.1-beta]` or `## [GNOME Shell 0.1.0-beta]`.
+Surfaces are versioned **independently**. A CLI-only heading is `## v0.1.4-beta · 11/08/2026`; a release with substantial work on both surfaces may use `m` (for example `v0.1.4m-beta`) and split the notes by surface.
 
 **CLI** tags (`cli/v*`) publish to crates.io + AUR + GitHub Releases. **GNOME Shell** tags are companion / changelog artifacts unless explicitly promoted.
 

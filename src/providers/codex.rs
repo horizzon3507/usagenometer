@@ -80,8 +80,12 @@ struct Auth {
 
 fn load_auth() -> Result<Auth, String> {
     let path = auth_path();
-    let raw = fs::read_to_string(&path)
-        .map_err(|_| format!("Codex CLI auth not found at {}. Run codex login.", path.display()))?;
+    let raw = fs::read_to_string(&path).map_err(|_| {
+        format!(
+            "Codex CLI auth not found at {}. Run codex login.",
+            path.display()
+        )
+    })?;
     let payload: Value = serde_json::from_str(&raw)
         .map_err(|_| format!("Codex CLI auth at {} is not valid JSON.", path.display()))?;
 
@@ -172,15 +176,16 @@ fn normalize_summary(payload: &Value) -> Value {
 
     // Prefer explicit secondary; a 7-day primary_window is the weekly pool.
     let (primary, weekly) = match (&primary, &weekly) {
-        (Some(p), week) if is_week_window(p) => {
-            (None, Some(week.clone().unwrap_or_else(|| {
+        (Some(p), week) if is_week_window(p) => (
+            None,
+            Some(week.clone().unwrap_or_else(|| {
                 let mut w = p.clone();
                 if let Some(obj) = w.as_object_mut() {
                     obj.insert("id".into(), Value::String("weekly".into()));
                 }
                 w
-            })))
-        }
+            })),
+        ),
         other => (other.0.clone(), other.1.clone()),
     };
 
@@ -226,7 +231,10 @@ fn named_window(value: Option<&Value>, id: &str) -> Option<Value> {
     if !value.is_object() {
         return None;
     }
-    let used = local_number(value, &["used", "used_tokens", "tokens_used", "usage", "consumed"]);
+    let used = local_number(
+        value,
+        &["used", "used_tokens", "tokens_used", "usage", "consumed"],
+    );
     let limit = local_number(value, &["limit", "token_limit", "quota", "max", "capacity"]);
     let percent_raw = local_number(
         value,
@@ -242,15 +250,9 @@ fn named_window(value: Option<&Value>, id: &str) -> Option<Value> {
     let percent = normalize_percent(percent_raw, used, limit)?;
     let window_seconds = local_number(
         value,
-        &[
-            "window_seconds",
-            "duration_seconds",
-            "limit_window_seconds",
-        ],
+        &["window_seconds", "duration_seconds", "limit_window_seconds"],
     )
-    .or_else(|| {
-        local_number(value, &["window_minutes", "duration_minutes"]).map(|m| m * 60.0)
-    })
+    .or_else(|| local_number(value, &["window_minutes", "duration_minutes"]).map(|m| m * 60.0))
     .or_else(|| local_number(value, &["window_hours", "duration_hours"]).map(|h| h * 3600.0))
     .or_else(|| local_number(value, &["window_days", "duration_days"]).map(|d| d * 86400.0));
 
@@ -277,11 +279,7 @@ fn find_window_by_hours(payload: &Value, hours: f64) -> Option<Value> {
     walk_windows(payload, &mut |obj| {
         let secs = local_number(
             obj,
-            &[
-                "window_seconds",
-                "duration_seconds",
-                "limit_window_seconds",
-            ],
+            &["window_seconds", "duration_seconds", "limit_window_seconds"],
         )?;
         if (secs - target).abs() <= tolerance {
             found = named_window(Some(obj), if hours >= 24.0 { "weekly" } else { "primary" });
@@ -310,7 +308,11 @@ fn walk_windows(value: &Value, f: &mut dyn FnMut(&Value) -> Option<()>) {
 
 fn normalize_percent(raw: Option<f64>, used: Option<f64>, limit: Option<f64>) -> Option<f64> {
     if let Some(p) = raw {
-        return Some(if p > 1.0 { clamp01(p / 100.0) } else { clamp01(p) });
+        return Some(if p > 1.0 {
+            clamp01(p / 100.0)
+        } else {
+            clamp01(p)
+        });
     }
     match (used, limit) {
         (Some(u), Some(l)) if l > 0.0 => Some(clamp01(u / l)),
@@ -329,7 +331,11 @@ fn local_number(obj: &Value, keys: &[&str]) -> Option<f64> {
 
 fn first_string(obj: &Value, keys: &[&str]) -> Value {
     for key in keys {
-        if let Some(s) = obj.get(*key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        if let Some(s) = obj
+            .get(*key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
             return Value::String(s.to_string());
         }
     }
@@ -362,7 +368,11 @@ fn meters_from_summary(summary: &Value) -> Vec<UsageMeter> {
         ));
     };
 
-    push(summary.get("primaryWindow"), "primary", "5 hour usage limit");
+    push(
+        summary.get("primaryWindow"),
+        "primary",
+        "5 hour usage limit",
+    );
     push(summary.get("weekWindow"), "weekly", "Weekly usage limit");
 
     if meters.is_empty()

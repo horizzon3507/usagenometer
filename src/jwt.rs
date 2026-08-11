@@ -20,9 +20,10 @@ pub fn jwt_claims(token: &str) -> Result<Value> {
 }
 
 pub fn jwt_exp(token: &str) -> Option<f64> {
-    jwt_claims(token)
-        .ok()
-        .and_then(|c| c.get("exp").and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))))
+    jwt_claims(token).ok().and_then(|c| {
+        c.get("exp")
+            .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
+    })
 }
 
 pub fn jwt_sub(token: &str) -> Option<String> {

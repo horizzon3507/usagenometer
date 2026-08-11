@@ -1,6 +1,7 @@
 //! Interactive TUI (ratatui) — B&W live meters.
 
-use std::io::{self,Stdout};
+use std::collections::HashMap;
+use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -15,8 +16,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::cli::DisplayMode;
 use crate::config::Settings;
-use crate::providers::{self, types::ProviderSnapshot};
 use crate::providers::types::SnapshotStatus;
+use crate::providers::{self, types::ProviderSnapshot};
 
 struct App {
     snaps: Vec<ProviderSnapshot>,
@@ -26,6 +27,7 @@ struct App {
     interval: Duration,
     message: String,
     settings: Settings,
+    etas: HashMap<String, String>,
 }
 
 pub fn run(settings: &Settings) -> Result<()> {
@@ -44,7 +46,7 @@ pub fn run(settings: &Settings) -> Result<()> {
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, settings: &Settings) -> Result<()> {
-    let snaps = fetch(settings);
+    let (snaps, etas) = fetch_with_etas(settings);
     let mut app = App {
         snaps,
         selected: 0,
@@ -53,6 +55,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, settings: &Setting
         interval: Duration::from_secs(settings.watch_interval.max(5)),
         message: "q quit · r refresh · j/k or ↑/↓ select".into(),
         settings: settings.clone(),
+        etas,
     };
 
     loop {
@@ -70,7 +73,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, settings: &Setting
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('r') => {
-                        app.snaps = fetch(&app.settings);
+                        let (snaps, etas) = fetch_with_etas(&app.settings);
+                        app.snaps = snaps;
+                        app.etas = etas;
                         app.last_refresh = Instant::now();
                         app.message = "refreshed".into();
                     }
@@ -96,7 +101,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, settings: &Setting
         }
 
         if app.last_refresh.elapsed() >= app.interval {
-            app.snaps = fetch(&app.settings);
+            let (snaps, etas) = fetch_with_etas(&app.settings);
+            app.snaps = snaps;
+            app.etas = etas;
             app.last_refresh = Instant::now();
             app.message = format!("auto refresh · every {}s", app.interval.as_secs());
         }
@@ -106,6 +113,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, settings: &Setting
 
 fn fetch(settings: &Settings) -> Vec<ProviderSnapshot> {
     providers::fetch_all_cached(&settings.providers, settings.cache_ttl, settings.history)
+}
+
+fn fetch_with_etas(settings: &Settings) -> (Vec<ProviderSnapshot>, HashMap<String, String>) {
+    let snaps = fetch(settings);
+    let etas = crate::history::HistoryStore::open()
+        .ok()
+        .map(|history| crate::eta::eta_map_from_history(&history, &snaps))
+        .unwrap_or_default();
+    (snaps, etas)
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
@@ -120,8 +136,16 @@ fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     let title = Paragraph::new("◈ usagenometer tui")
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray)));
+        .style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
     f.render_widget(title, chunks[0]);
 
     let items: Vec<ListItem> = app
@@ -160,7 +184,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     let detail = app
         .snaps
         .get(app.selected)
-        .map(|s| format_detail(s, app.settings.display, app.settings.privacy))
+        .map(|s| format_detail(s, app.settings.display, app.settings.privacy, &app.etas))
         .unwrap_or_else(|| "no providers".into());
     let detail_w = Paragraph::new(detail)
         .style(Style::default().fg(Color::Gray))
@@ -173,12 +197,16 @@ fn ui(f: &mut Frame, app: &mut App) {
         );
     f.render_widget(detail_w, chunks[2]);
 
-    let help = Paragraph::new(app.message.as_str())
-        .style(Style::default().fg(Color::DarkGray));
+    let help = Paragraph::new(app.message.as_str()).style(Style::default().fg(Color::DarkGray));
     f.render_widget(help, chunks[3]);
 }
 
-fn format_detail(snap: &ProviderSnapshot, display: DisplayMode, privacy: bool) -> String {
+fn format_detail(
+    snap: &ProviderSnapshot,
+    display: DisplayMode,
+    privacy: bool,
+    etas: &HashMap<String, String>,
+) -> String {
     let mut lines = Vec::new();
     let mut header = snap.label.clone();
     if let Some(account) = snap.account.as_deref().filter(|s| !s.is_empty()) {
@@ -203,7 +231,11 @@ fn format_detail(snap: &ProviderSnapshot, display: DisplayMode, privacy: bool) -
                 let pct = fraction
                     .map(|f| format!("{:.0}%", f * 100.0))
                     .unwrap_or_else(|| "—".into());
-                lines.push(format!("  {:<20} {pct}", m.title));
+                let eta = etas
+                    .get(&format!("{}/{}", snap.id, m.id))
+                    .map(|value| format!("  ·  runway {value}"))
+                    .unwrap_or_default();
+                lines.push(format!("  {:<20} {pct}{eta}", m.title));
             }
         }
         _ => {

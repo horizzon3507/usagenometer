@@ -1,8 +1,32 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+We follow [Semantic Versioning](https://semver.org/) and keep the primary CLI and its GNOME Shell companion as separate installable surfaces.
 
-Versioning, surfaces, channels, and tag format: see [VERSIONING.md](VERSIONING.md).
+<details>
+<summary>To see more about versioning, expand this.</summary>
+
+Every release heading starts with `v`, for example `v0.1.4-beta`. The primary **CLI** is tagged as `cli/vX.Y.Z-channel` and publishes to crates.io, AUR, and GitHub Releases. The **GNOME Shell** companion uses `gnome/vX.Y.Z-channel` and is versioned separately.
+
+When one cut contains substantial user-facing work for both surfaces, it is recorded as a mixed release with `m` before the channel — for example `v0.1.4m-beta` — and its notes split the CLI and GNOME work. A CLI-only release does not bump GNOME merely for being compatible.
+
+| Suffix | In plain words |
+| --- | --- |
+| **-alpha** | Very early; expect missing features and breakage. |
+| **-beta** | Usable, but still settling. |
+| **-stable** | Ready for daily use and deliberately release-ready. |
+
+</details>
+
+## v0.1.4-beta · 11/08/2026
+
+Fast local snapshots, durable quota alerts, and an actionable local runway view. This version was made for CLI with a beta release channel on 11/08/2026 (v0.1.4-beta).
+
+- `cache_ttl` now serves a fresh local snapshot before contacting provider APIs, making `usg -c -q`, prompts, bars, and the GNOME thin client fast by default; stale fallback remains visibly marked after a failed live refresh.
+- Alert notifications persist their active state under the XDG cache: systemd timers notify once on a threshold crossing, stop repeating an already-active alert, and send a low-urgency recovery notification once it clears.
+- `usg history --runway` turns local snapshots into per-meter used percentage, sample count, estimated exhaustion runway, and next reset when supplied by the provider. Flat or reset-heavy series remain explicitly unestimated.
+- `usg tui` now shows the same history-backed runway alongside each selected meter.
+- `usg providers --verbose` exposes the provider contract (`quota`, `balance`, `resets`, `history`) so consumers can distinguish verified meter types without inventing data.
+- Various other reliability tests and documentation polish
 
 ## [CLI 0.1.3-beta] - 2026-08-01
 

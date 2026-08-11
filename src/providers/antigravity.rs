@@ -62,7 +62,10 @@ fn fetch_inner(client: &HttpClient) -> Result<ProviderSnapshot, FetchErr> {
         };
         FetchErr { status, message }
     })?;
-    Ok(snapshot_from_quota_summary(&summary, auth.account.as_deref()))
+    Ok(snapshot_from_quota_summary(
+        &summary,
+        auth.account.as_deref(),
+    ))
 }
 
 struct Auth {
@@ -157,9 +160,7 @@ fn load_auth(client: &HttpClient) -> Result<Auth, String> {
     if let Some(exp) = expires_at
         && exp <= now + EXPIRY_SKEW
     {
-        return Err(
-            "Antigravity access token is expired. Sign in again with Antigravity.".into(),
-        );
+        return Err("Antigravity access token is expired. Sign in again with Antigravity.".into());
     }
 
     Ok(Auth {
@@ -223,7 +224,9 @@ fn parse_secret_text(text: &str) -> Result<Value, String> {
 }
 
 fn read_active_google_account() -> Option<String> {
-    let path = dirs::home_dir()?.join(".gemini").join("google_accounts.json");
+    let path = dirs::home_dir()?
+        .join(".gemini")
+        .join("google_accounts.json");
     let raw = fs::read_to_string(path).ok()?;
     let payload: Value = serde_json::from_str(&raw).ok()?;
     payload

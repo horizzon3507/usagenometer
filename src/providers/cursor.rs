@@ -84,7 +84,12 @@ fn load_auth() -> Result<Auth, String> {
             "cursorAuth/stripeMembershipType",
         ],
     )
-    .map_err(|_| format!("Failed to read Cursor state database at {}.", path.display()))?;
+    .map_err(|_| {
+        format!(
+            "Failed to read Cursor state database at {}.",
+            path.display()
+        )
+    })?;
 
     let access = values
         .get("cursorAuth/accessToken")
@@ -203,9 +208,7 @@ pub fn snapshot_from_usage_summary(summary: &Value, auth: &Auth) -> ProviderSnap
     let individual = summary.get("individualUsage").unwrap_or(&Value::Null);
     let plan = individual.get("plan").unwrap_or(&Value::Null);
     let on_demand = individual.get("onDemand").unwrap_or(&Value::Null);
-    let cycle_end = summary
-        .get("billingCycleEnd")
-        .and_then(coerce_unix_seconds);
+    let cycle_end = summary.get("billingCycleEnd").and_then(coerce_unix_seconds);
 
     let mut meters = Vec::new();
 

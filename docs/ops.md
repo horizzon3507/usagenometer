@@ -83,6 +83,8 @@ usg -q --alert 80 --alert-eta 2 --notify status
 - `--alert-eta 2` — exhaustion ETA ≤ 2 hours (needs history from prior `status`/`watch` runs)  
 - `--notify` — `notify-send` when an alert fires  
 
+Alert state is persisted in `~/.cache/usagenometer/alerts.json`: the timer notifies only when a meter crosses into alert state, and sends one low-urgency recovery notification after it clears. Delete that file only when you intentionally want all active alerts treated as new again.
+
 Config equivalents in `~/.config/usagenometer/config.toml`:
 
 ```toml
@@ -91,5 +93,14 @@ alert_eta = 2
 notify = true
 history = true
 ```
+
+## Runway
+
+```bash
+usg history --runway
+usg history --runway codex
+```
+
+Runway is a local linear estimate from recorded snapshots. It reports no estimate for a flat, declining, or reset-heavy series rather than pretending it knows when a quota will run out.
 
 Long-running watch (optional): `usagenometer-watch.service`.

@@ -14,9 +14,7 @@ pub struct RoutingHint {
 fn worst_left(snap: &ProviderSnapshot) -> Option<f64> {
     let mut best: Option<f64> = None; // minimum left
     for m in &snap.meters {
-        let left = m
-            .left_percent
-            .or_else(|| m.percent.map(|p| 1.0 - p))?;
+        let left = m.left_percent.or_else(|| m.percent.map(|p| 1.0 - p))?;
         let left = if left > 1.0 { left / 100.0 } else { left };
         best = Some(match best {
             Some(b) => b.min(left),

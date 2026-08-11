@@ -13,6 +13,39 @@ use crate::history::HistoryStore;
 use crate::http::HttpClient;
 use types::{ProviderSnapshot, SnapshotStatus};
 
+/// Honest provider contract for surfaces that need to explain a result instead
+/// of implying that every provider exposes the same kind of quota.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub real_quota: bool,
+    pub money_balance: bool,
+    pub reset_windows: bool,
+    pub local_history: bool,
+}
+
+pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
+    match id {
+        "codex" | "cursor" | "antigravity" | "claude" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: false,
+            reset_windows: true,
+            local_history: true,
+        },
+        "grok" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: true,
+            reset_windows: true,
+            local_history: true,
+        },
+        _ => ProviderCapabilities {
+            real_quota: false,
+            money_balance: false,
+            reset_windows: false,
+            local_history: false,
+        },
+    }
+}
+
 pub fn provider_label(id: &str) -> &'static str {
     match id {
         "codex" => "Codex",
@@ -55,9 +88,16 @@ pub fn fetch_all_cached(
         None
     };
 
-    let _ = cache_ttl; // reserved: max age for accepting stale fallback
     ids.into_iter()
         .map(|id| {
+            // Prompt/statusline and the GNOME companion must not open five
+            // network connections for every render. A fresh cache is a valid
+            // snapshot; a cache after a failed fetch remains explicitly stale.
+            if cache_ttl > 0 {
+                if let Some(snap) = cache.load_fresh(id) {
+                    return snap;
+                }
+            }
             let mut snap = fetch_one(id, client.as_ref());
             if snap.status == SnapshotStatus::Ok {
                 snap.stale_age_secs = None;
@@ -88,6 +128,18 @@ pub fn fetch_all_cached(
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_contracts_do_not_claim_unknown_quota() {
+        assert!(provider_capabilities("codex").real_quota);
+        assert!(provider_capabilities("grok").money_balance);
+        assert!(!provider_capabilities("unknown").real_quota);
+    }
+}
+
 pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
     match id {
         "codex" => match client {
@@ -110,7 +162,12 @@ pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
             Some(c) => grok::fetch(c),
             None => http_unavailable(id),
         },
-        _ => ProviderSnapshot::fail(id, provider_label(id), SnapshotStatus::Error, "Unknown provider"),
+        _ => ProviderSnapshot::fail(
+            id,
+            provider_label(id),
+            SnapshotStatus::Error,
+            "Unknown provider",
+        ),
     }
 }
 
@@ -133,9 +190,7 @@ pub fn test_provider(id: &str) -> (bool, String, ProviderSnapshot) {
             } else if !snap.meters.is_empty() {
                 format!("Connected · {} meter(s)", snap.meters.len())
             } else {
-                snap.error
-                    .clone()
-                    .unwrap_or_else(|| "Connection OK".into())
+                snap.error.clone().unwrap_or_else(|| "Connection OK".into())
             };
             (true, msg, snap)
         }

@@ -2,7 +2,9 @@
 //!
 //! Alerts fire on used-% thresholds and/or exhaustion ETA (from history).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::cli::DisplayMode;
@@ -27,6 +29,71 @@ pub struct AlertEvent {
     pub kind: AlertKind,
     /// Seconds until exhaustion when `kind == Eta`.
     pub eta_seconds: Option<f64>,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct PersistedAlertState {
+    active: BTreeSet<String>,
+}
+
+/// Alert state survives one-shot systemd runs, so a quota already above its
+/// threshold does not notify again every timer interval.
+pub struct AlertStateStore {
+    path: PathBuf,
+    state: PersistedAlertState,
+}
+
+pub struct AlertReconciliation {
+    pub new_events: Vec<AlertEvent>,
+    pub recovered: Vec<String>,
+}
+
+impl AlertStateStore {
+    pub fn open() -> Self {
+        Self::open_at(crate::paths::cache_dir().join("alerts.json"))
+    }
+
+    fn open_at(path: PathBuf) -> Self {
+        let state = fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        Self { path, state }
+    }
+
+    pub fn reconcile(&mut self, events: Vec<AlertEvent>) -> AlertReconciliation {
+        let now: BTreeSet<String> = events.iter().map(alert_key).collect();
+        let recovered = self
+            .state
+            .active
+            .difference(&now)
+            .cloned()
+            .collect::<Vec<_>>();
+        let new_events = events
+            .into_iter()
+            .filter(|event| !self.state.active.contains(&alert_key(event)))
+            .collect();
+        self.state.active = now;
+        let _ = self.save();
+        AlertReconciliation {
+            new_events,
+            recovered,
+        }
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        crate::paths::ensure_dir(&self.path).map_err(std::io::Error::other)?;
+        let raw = serde_json::to_string(&self.state).map_err(std::io::Error::other)?;
+        fs::write(&self.path, raw)
+    }
+}
+
+fn alert_key(event: &AlertEvent) -> String {
+    let kind = match event.kind {
+        AlertKind::UsedPercent => "pct",
+        AlertKind::Eta => "eta",
+    };
+    format!("{}/{}/{}", event.provider_id, event.meter_title, kind)
 }
 
 /// Evaluate meters against used-% and optional ETA thresholds.
@@ -184,6 +251,23 @@ pub fn maybe_notify(events: &[AlertEvent], enabled: bool) {
         .output();
 }
 
+pub fn maybe_notify_recoveries(recovered: &[String], enabled: bool) {
+    if !enabled || recovered.is_empty() {
+        return;
+    }
+    let body = recovered
+        .iter()
+        .map(|key| format!("{key} is back below its alert threshold"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = Command::new("notify-send")
+        .arg("--app-name=usagenometer")
+        .arg("--urgency=low")
+        .arg("usagenometer recovered")
+        .arg(body)
+        .output();
+}
+
 /// Track which alerts already fired this process (provider/meter/kind) to avoid spam in watch.
 pub struct AlertTracker {
     fired: std::collections::HashSet<String>,
@@ -304,5 +388,31 @@ mod tests {
         etas.insert("codex/w".into(), 10_800.0); // 3 hours
         let events = evaluate(&[snap], &settings_eta(1.0), Some(&etas));
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn persisted_state_only_emits_on_threshold_crossing() {
+        let path = std::env::temp_dir().join(format!(
+            "usagenometer-alert-state-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let event = AlertEvent {
+            provider_id: "codex".into(),
+            provider_label: "Codex".into(),
+            meter_title: "5 hour".into(),
+            used_pct: 90.0,
+            threshold: 80.0,
+            display: DisplayMode::Used,
+            kind: AlertKind::UsedPercent,
+            eta_seconds: None,
+        };
+        let mut first = AlertStateStore::open_at(path.clone());
+        assert_eq!(first.reconcile(vec![event.clone()]).new_events.len(), 1);
+        let mut second = AlertStateStore::open_at(path.clone());
+        assert!(second.reconcile(vec![event]).new_events.is_empty());
+        let recovered = second.reconcile(vec![]);
+        assert_eq!(recovered.recovered.len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

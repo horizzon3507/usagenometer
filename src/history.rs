@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
 use crate::paths;
-use crate::providers::types::ProviderSnapshot;
 use crate::privacy;
+use crate::providers::types::ProviderSnapshot;
 
 #[derive(Debug, Clone)]
 pub struct HistorySample {
@@ -27,6 +27,18 @@ pub struct MeterPoint {
     pub meter_id: String,
     pub meter_title: String,
     pub used_percent: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Runway {
+    pub provider_id: String,
+    pub provider_label: String,
+    pub meter_id: String,
+    pub meter_title: String,
+    pub used_percent: f64,
+    pub eta_seconds: Option<f64>,
+    pub samples: usize,
+    pub reset_at: Option<f64>,
 }
 
 pub struct HistoryStore {
@@ -156,14 +168,11 @@ impl HistoryStore {
                 if id != meter_id {
                     continue;
                 }
-                let used = m
-                    .get("percent")
-                    .and_then(|v| v.as_f64())
-                    .or_else(|| {
-                        m.get("left_percent")
-                            .and_then(|v| v.as_f64())
-                            .map(|lp| 1.0 - lp)
-                    });
+                let used = m.get("percent").and_then(|v| v.as_f64()).or_else(|| {
+                    m.get("left_percent")
+                        .and_then(|v| v.as_f64())
+                        .map(|lp| 1.0 - lp)
+                });
                 if let Some(u) = used {
                     points.push((sample.recorded_at, u.clamp(0.0, 1.0)));
                 }
@@ -173,11 +182,7 @@ impl HistoryStore {
     }
 
     /// All meter used% points for ETA / sparkline (recent N snapshots per provider).
-    pub fn recent_meter_points(
-        &self,
-        provider_id: &str,
-        limit: usize,
-    ) -> Result<Vec<MeterPoint>> {
+    pub fn recent_meter_points(&self, provider_id: &str, limit: usize) -> Result<Vec<MeterPoint>> {
         let samples = self.recent(limit.max(2), Some(provider_id))?;
         let mut points = Vec::new();
         for sample in samples.into_iter().rev() {
@@ -194,14 +199,11 @@ impl HistoryStore {
                     .and_then(|v| v.as_str())
                     .unwrap_or(meter_id.as_str())
                     .to_string();
-                let used = m
-                    .get("percent")
-                    .and_then(|v| v.as_f64())
-                    .or_else(|| {
-                        m.get("left_percent")
-                            .and_then(|v| v.as_f64())
-                            .map(|lp| 1.0 - lp)
-                    });
+                let used = m.get("percent").and_then(|v| v.as_f64()).or_else(|| {
+                    m.get("left_percent")
+                        .and_then(|v| v.as_f64())
+                        .map(|lp| 1.0 - lp)
+                });
                 if let Some(u) = used {
                     points.push(MeterPoint {
                         recorded_at: sample.recorded_at,
@@ -217,6 +219,69 @@ impl HistoryStore {
 
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+
+    /// Turn local snapshots into an actionable current runway view. This is
+    /// deliberately observational: it estimates only when usage increases.
+    pub fn runway(&self, provider: Option<&str>) -> Result<Vec<Runway>> {
+        let rows = self.recent(500, provider)?;
+        let mut ids: Vec<String> = rows.iter().map(|row| row.provider_id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        let mut out = Vec::new();
+        for id in ids {
+            let Some(latest) = self.recent(1, Some(&id))?.into_iter().next() else {
+                continue;
+            };
+            let meters: Vec<serde_json::Value> =
+                serde_json::from_str(&latest.meters_json).unwrap_or_default();
+            let points = self.recent_meter_points(&id, 48)?;
+            for meter in meters {
+                let meter_id = meter.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if meter_id.is_empty() {
+                    continue;
+                }
+                let used = meter
+                    .get("percent")
+                    .and_then(|v| v.as_f64())
+                    .or_else(|| {
+                        meter
+                            .get("left_percent")
+                            .and_then(|v| v.as_f64())
+                            .map(|v| 1.0 - v)
+                    })
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
+                let series: Vec<(f64, f64)> = points
+                    .iter()
+                    .filter(|point| point.meter_id == meter_id)
+                    .map(|point| (point.recorded_at, point.used_percent))
+                    .collect();
+                let (eta_seconds, samples) = crate::eta::eta_from_points(&series)
+                    .map(|(seconds, count)| (Some(seconds), count))
+                    .unwrap_or((None, series.len()));
+                out.push(Runway {
+                    provider_id: id.clone(),
+                    provider_label: latest.provider_label.clone(),
+                    meter_id: meter_id.into(),
+                    meter_title: meter
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(meter_id)
+                        .into(),
+                    used_percent: used,
+                    eta_seconds,
+                    samples,
+                    reset_at: meter.get("reset_at").and_then(|v| v.as_f64()),
+                });
+            }
+        }
+        out.sort_by(|a, b| {
+            a.provider_id
+                .cmp(&b.provider_id)
+                .then(a.meter_id.cmp(&b.meter_id))
+        });
+        Ok(out)
     }
 }
 
@@ -265,13 +330,17 @@ pub fn format_history_line(sample: &HistorySample, privacy: bool) -> String {
         let delta = (now_secs() - sample.recorded_at).max(0.0);
         crate::ui::fmt_duration_secs(delta as u64)
     };
-    let account = sample.account.as_deref().filter(|s| !s.is_empty()).map(|a| {
-        if privacy {
-            privacy::redact_account(a)
-        } else {
-            a.to_string()
-        }
-    });
+    let account = sample
+        .account
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|a| {
+            if privacy {
+                privacy::redact_account(a)
+            } else {
+                a.to_string()
+            }
+        });
     let meters: Vec<serde_json::Value> =
         serde_json::from_str(&sample.meters_json).unwrap_or_default();
     let mut parts = Vec::new();
@@ -287,17 +356,33 @@ pub fn format_history_line(sample: &HistorySample, privacy: bool) -> String {
             .unwrap_or_else(|| "—".into());
         parts.push(format!("{title} {pct}"));
     }
-    let mut line = format!(
-        "{:<12} {ago:>6} ago",
-        sample.provider_label,
-        ago = age
-    );
+    let mut line = format!("{:<12} {ago:>6} ago", sample.provider_label, ago = age);
     if let Some(a) = account {
         line.push_str(&format!("  ·  {a}"));
     }
     if !parts.is_empty() {
         line.push_str("  ·  ");
         line.push_str(&parts.join(" · "));
+    }
+    line
+}
+
+pub fn format_runway_line(runway: &Runway) -> String {
+    let used = format!("{:.0}% used", runway.used_percent * 100.0);
+    let eta = runway
+        .eta_seconds
+        .map(crate::eta::format_eta)
+        .unwrap_or_else(|| "no burn estimate yet".into());
+    let reset = runway.reset_at.and_then(|at| {
+        let seconds = at - now_secs();
+        (seconds > 0.0).then(|| format!("reset {}", crate::ui::fmt_duration_secs(seconds as u64)))
+    });
+    let mut line = format!(
+        "{:<12} {:<18} {} · runway {} · {} samples",
+        runway.provider_label, runway.meter_title, used, eta, runway.samples
+    );
+    if let Some(reset) = reset {
+        line.push_str(&format!(" · {reset}"));
     }
     line
 }
@@ -309,10 +394,8 @@ mod tests {
 
     #[test]
     fn records_and_lists() {
-        let path = std::env::temp_dir().join(format!(
-            "usagenometer-hist-{}.sqlite3",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("usagenometer-hist-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let store = HistoryStore::open_at(path.clone()).unwrap();
         let mut snap = ProviderSnapshot::ok("codex", "Codex");
@@ -330,5 +413,21 @@ mod tests {
     fn sparkline_nonempty() {
         let s = sparkline(&[0.1, 0.5, 0.9], 8);
         assert_eq!(s.chars().count(), 8);
+    }
+
+    #[test]
+    fn runway_uses_recorded_snapshots() {
+        let path = std::env::temp_dir().join(format!(
+            "usagenometer-runway-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let store = HistoryStore::open_at(path.clone()).unwrap();
+        let mut snap = ProviderSnapshot::ok("codex", "Codex");
+        snap.meters
+            .push(meter_from_used_percent("5h", "5 hour", 40.0, None));
+        store.record(&snap).unwrap();
+        assert_eq!(store.runway(Some("codex")).unwrap().len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

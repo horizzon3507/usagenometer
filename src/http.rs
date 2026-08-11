@@ -23,7 +23,13 @@ pub enum HttpError {
 
 impl HttpError {
     pub fn is_auth_error(&self) -> bool {
-        matches!(self, Self::Status { status: 401 | 403, .. })
+        matches!(
+            self,
+            Self::Status {
+                status: 401 | 403,
+                ..
+            }
+        )
     }
 }
 
@@ -101,15 +107,14 @@ fn build_headers(headers: &[(&str, &str)]) -> Result<HeaderMap, HttpError> {
 
 fn parse_json<T: DeserializeOwned>(response: Response) -> Result<T, HttpError> {
     let status = response.status().as_u16();
-    let text = response
-        .text()
-        .map_err(|e| HttpError::Other(e.into()))?;
+    let text = response.text().map_err(|e| HttpError::Other(e.into()))?;
     let payload: Option<Value> = if text.trim().is_empty() {
         None
     } else {
-        Some(serde_json::from_str(&text).map_err(|e| {
-            HttpError::Other(anyhow!("invalid JSON: {e}"))
-        })?)
+        Some(
+            serde_json::from_str(&text)
+                .map_err(|e| HttpError::Other(anyhow!("invalid JSON: {e}")))?,
+        )
     };
 
     if !(200..300).contains(&status) {

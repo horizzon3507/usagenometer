@@ -90,6 +90,6 @@ PROMPT='${usg_line:+$usg_line }%n@%m %1~ %# '
 
 ## Tips
 
-- Keep `usg -c -q` under ~100–200ms on a warm cache; raise `cache_ttl` in config if the prompt feels slow.
+- `usg -c -q` reads a fresh local cache first. Keep `cache_ttl` at 60–300 seconds for a fast prompt; use `cache_ttl = 0` when you explicitly need a live fetch every time.
 - Filter providers: `usg -c -q -p codex -p cursor`.
 - For bars (waybar / polybar), use the same command as an `exec` / `custom` module with a longer interval (60s+).

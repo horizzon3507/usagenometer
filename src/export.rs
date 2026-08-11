@@ -19,10 +19,7 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
         "# HELP usagenometer_left_ratio Quota remaining as a unit interval (0..1)."
     )?;
     writeln!(out, "# TYPE usagenometer_left_ratio gauge")?;
-    writeln!(
-        out,
-        "# HELP usagenometer_up Provider fetch success (1=ok)."
-    )?;
+    writeln!(out, "# HELP usagenometer_up Provider fetch success (1=ok).")?;
     writeln!(out, "# TYPE usagenometer_up gauge")?;
 
     for snap in snaps {

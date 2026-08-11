@@ -56,6 +56,7 @@ usg check --fail-under 10   # exit 2 if remaining % below threshold
 usg test
 usg doctor                  # auth paths / expiry (no secrets)
 usg explain [provider]
+usg history --runway          # local burn rate + exhaustion estimate + reset
 usg history --spark
 usg config --dump
 usg tui                     # interactive live view
@@ -92,7 +93,7 @@ usg --help
 | `json` (`j`) | Dump snapshots as JSON |
 | `doctor` | Diagnose auth files, token expiry, Antigravity OAuth env |
 | `explain` | Inline docs for plan/meter meanings |
-| `history` | Local SQLite snapshots (`--spark` for burn sparklines) |
+| `history` | Local SQLite snapshots (`--runway` for burn/ETA/reset; `--spark` for sparklines) |
 | `config` | Show XDG paths; `--dump` effective TOML |
 | `tui` | Interactive TUI (`q` quit, `r` refresh, `j`/`k` select) |
 | `completions` | Generate bash/zsh/fish/… completions to stdout |
@@ -112,7 +113,7 @@ alert_eta = 2                  # hours until exhaustion (optional)
 privacy = false
 compact = false
 notify = false
-cache_ttl = 300                # seconds (stale fallback window scaling)
+cache_ttl = 300                # seconds; fresh local snapshot before network fetch
 history = true                 # persist snapshots for ETA / history
 
 [alerts]
@@ -161,6 +162,8 @@ Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude l
 
 Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 
+Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates. The CLI never manufactures a percentage when a provider only exposes status.
+
 ## GNOME Shell extension (beta)
 
 The top-bar extension is a **thin client**: it runs `usg json` / `usg test` and renders the panel. Install the CLI on PATH first. Compatible with GNOME Shell `45`–`50`.
@@ -207,7 +210,8 @@ packaging/systemd/    # user timer examples for alerts
 ## Notes
 
 - Tokens are never written by usagenometer.
-- On API failure, a recent cached snapshot may show as `(stale Xm)` when available.
+- `cache_ttl` serves a fresh local snapshot before a network request; when a live request fails after that TTL, a recent last-good snapshot may show as `(stale Xm)`.
+- Alert notifications are edge-triggered and persisted under the XDG cache, so a systemd timer notifies on threshold crossing and once when the meter recovers.
 - Cursor and Antigravity private APIs can change; failures stay per-provider.
 - Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after extension install.
 - License: **Apache-2.0**.

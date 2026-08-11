@@ -72,8 +72,6 @@ pub fn display_path(path: &std::path::Path) -> String {
     if comps.len() <= 3 {
         return format!("…{s}");
     }
-    let tail: PathBuf = comps[comps.len().saturating_sub(3)..]
-        .iter()
-        .collect();
+    let tail: PathBuf = comps[comps.len().saturating_sub(3)..].iter().collect();
     format!("…/{}", tail.display())
 }

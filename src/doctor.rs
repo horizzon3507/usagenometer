@@ -60,8 +60,14 @@ pub fn print_report(checks: &[Check]) {
         );
     }
     println!();
-    let fails = checks.iter().filter(|c| c.status == CheckStatus::Fail).count();
-    let warns = checks.iter().filter(|c| c.status == CheckStatus::Warn).count();
+    let fails = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Fail)
+        .count();
+    let warns = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Warn)
+        .count();
     use crossterm::style::Stylize;
     println!(
         "  {} {} fail · {} warn · {} checks",
@@ -420,7 +426,10 @@ fn token_expiry_check(name: &str, token: &str) -> Check {
                 Check {
                     status: CheckStatus::Pass,
                     name: name.into(),
-                    detail: format!("valid · expires in {}", crate::ui::fmt_duration_secs(left as u64)),
+                    detail: format!(
+                        "valid · expires in {}",
+                        crate::ui::fmt_duration_secs(left as u64)
+                    ),
                 }
             }
         }

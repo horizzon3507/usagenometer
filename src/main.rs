@@ -13,7 +13,7 @@ use crossterm::style::Stylize;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{ExecutableCommand, cursor};
 
-use usagenometer::alerts::{self, AlertTracker};
+use usagenometer::alerts::{self, AlertStateStore};
 use usagenometer::cli::{Cli, Command, OutputFormat, ProviderArg, ShellArg};
 use usagenometer::config::{ConfigFile, Settings};
 use usagenometer::doctor;
@@ -67,8 +67,8 @@ fn run() -> Result<()> {
         Some(Command::Test { provider }) => {
             cmd_test(&settings, provider)?;
         }
-        Some(Command::Providers) => {
-            cmd_providers(settings.quiet);
+        Some(Command::Providers { verbose }) => {
+            cmd_providers(settings.quiet, verbose);
         }
         Some(Command::Json) => {
             cmd_json(&settings)?;
@@ -90,8 +90,9 @@ fn run() -> Result<()> {
             limit,
             provider,
             spark,
+            runway,
         }) => {
-            cmd_history(&settings, limit, provider, spark)?;
+            cmd_history(&settings, limit, provider, spark, runway)?;
         }
         Some(Command::Config { dump }) => {
             cmd_config(&settings, dump);
@@ -211,8 +212,15 @@ fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
     );
 
     let events = alerts::evaluate(&snaps, settings, eta_secs.as_ref());
-    alerts::print_alerts(&events, settings.quiet);
-    alerts::maybe_notify(&events, settings.notify);
+    if settings.notify {
+        let mut store = AlertStateStore::open();
+        let transitions = store.reconcile(events);
+        alerts::print_alerts(&transitions.new_events, settings.quiet);
+        alerts::maybe_notify(&transitions.new_events, true);
+        alerts::maybe_notify_recoveries(&transitions.recovered, true);
+    } else {
+        alerts::print_alerts(&events, settings.quiet);
+    }
 
     if !settings.quiet
         && !compact
@@ -241,7 +249,7 @@ fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
     }
 
     let mut prev: Option<Vec<_>> = None;
-    let mut tracker = AlertTracker::new();
+    let mut alert_store = settings.notify.then(AlertStateStore::open);
 
     loop {
         let snaps = fetch(settings);
@@ -253,9 +261,7 @@ fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
                 let _ = stdout.execute(Clear(ClearType::All));
                 if !settings.quiet {
                     banner();
-                    print_info(&format!(
-                        "watch diff · every {interval}s · Ctrl-C to quit"
-                    ));
+                    print_info(&format!("watch diff · every {interval}s · Ctrl-C to quit"));
                     println!();
                 }
                 print_diff(p, &snaps, settings.display);
@@ -301,11 +307,19 @@ fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
         let eta_secs = HistoryStore::open()
             .ok()
             .map(|h| eta::eta_seconds_from_history(&h, &snaps));
-        let events = tracker.filter_new(alerts::evaluate(&snaps, settings, eta_secs.as_ref()));
-        alerts::print_alerts(&events, settings.quiet);
-        alerts::maybe_notify(&events, settings.notify);
+        let events = alerts::evaluate(&snaps, settings, eta_secs.as_ref());
+        if let Some(store) = alert_store.as_mut() {
+            let transitions = store.reconcile(events);
+            alerts::print_alerts(&transitions.new_events, settings.quiet);
+            alerts::maybe_notify(&transitions.new_events, true);
+            alerts::maybe_notify_recoveries(&transitions.recovered, true);
+        } else {
+            alerts::print_alerts(&events, settings.quiet);
+        }
 
-        if !settings.quiet && !settings.compact && !diff
+        if !settings.quiet
+            && !settings.compact
+            && !diff
             && let Some(hint) = routing::compute(&snaps)
         {
             print_info(&hint.message);
@@ -353,16 +367,27 @@ fn cmd_test(settings: &Settings, provider: Option<ProviderArg>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_providers(quiet: bool) {
+fn cmd_providers(quiet: bool, verbose: bool) {
     if !quiet {
         banner();
     }
     for p in ProviderArg::all() {
-        println!(
-            "  {}  {}",
-            p.id().with(WHITE),
-            providers::provider_label(p.id()).with(usagenometer::ui::GRAY)
-        );
+        let mut line = format!("  {}  {}", p.id(), providers::provider_label(p.id()));
+        if verbose {
+            let c = providers::provider_capabilities(p.id());
+            let mut facts = vec![if c.real_quota { "quota" } else { "status only" }];
+            if c.money_balance {
+                facts.push("balance");
+            }
+            if c.reset_windows {
+                facts.push("resets");
+            }
+            if c.local_history {
+                facts.push("history");
+            }
+            line.push_str(&format!("  ·  {}", facts.join(", ")));
+        }
+        println!("{}", line.with(WHITE));
     }
     println!();
 }
@@ -409,6 +434,7 @@ fn cmd_history(
     limit: usize,
     provider: Option<ProviderArg>,
     spark: bool,
+    runway: bool,
 ) -> Result<()> {
     let store = HistoryStore::open()?;
     if !settings.quiet {
@@ -417,6 +443,25 @@ fn cmd_history(
         println!();
     }
     let pid = provider.map(|p| p.id());
+    if runway {
+        let rows = store.runway(pid)?;
+        if rows.is_empty() {
+            print_info("no history yet — run usg status a few times");
+        } else {
+            print_info(
+                "runway is a local linear estimate; flat or reset-heavy meters show no estimate",
+            );
+            println!();
+            for row in rows {
+                println!(
+                    "  {}",
+                    history::format_runway_line(&row).with(usagenometer::ui::GRAY)
+                );
+            }
+        }
+        println!();
+        return Ok(());
+    }
     let rows = store.recent(limit, pid)?;
     if rows.is_empty() {
         print_info("no history yet — run usg status a few times");
@@ -426,8 +471,7 @@ fn cmd_history(
     for sample in &rows {
         println!(
             "  {}",
-            history::format_history_line(sample, settings.privacy)
-                .with(usagenometer::ui::GRAY)
+            history::format_history_line(sample, settings.privacy).with(usagenometer::ui::GRAY)
         );
     }
     if spark {

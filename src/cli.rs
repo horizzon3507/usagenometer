@@ -157,11 +157,7 @@ pub struct Cli {
     pub compact: bool,
 
     /// Hide/redact account emails
-    #[arg(
-        long = "privacy",
-        global = true,
-        help = "Redact account identifiers"
-    )]
+    #[arg(long = "privacy", global = true, help = "Redact account identifiers")]
     pub privacy: bool,
 
     /// Alert when used % reaches this threshold (0–100)
@@ -199,11 +195,7 @@ pub struct Cli {
     pub json: bool,
 
     /// Pretty-print JSON when --json / json command
-    #[arg(
-        long = "pretty",
-        global = true,
-        help = "Pretty-print JSON output"
-    )]
+    #[arg(long = "pretty", global = true, help = "Pretty-print JSON output")]
     pub pretty: bool,
 
     /// Output format (text / json / prometheus)
@@ -254,7 +246,11 @@ pub enum Command {
 
     /// List known providers
     #[command(visible_aliases = ["ls", "list"])]
-    Providers,
+    Providers {
+        /// Include the provider contract (quota, balance, reset windows)
+        #[arg(long)]
+        verbose: bool,
+    },
 
     /// Dump snapshots as JSON
     #[command(visible_alias = "j")]
@@ -287,6 +283,9 @@ pub enum Command {
         /// Show sparkline for burn rate
         #[arg(long)]
         spark: bool,
+        /// Summarize current burn rate, exhaustion runway, and next reset
+        #[arg(long)]
+        runway: bool,
     },
 
     /// Show config path / effective settings

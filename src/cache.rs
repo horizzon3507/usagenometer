@@ -96,10 +96,8 @@ mod tests {
 
     #[test]
     fn roundtrip_cache() {
-        let dir = std::env::temp_dir().join(format!(
-            "usagenometer-cache-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("usagenometer-cache-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let cache = SnapshotCache {

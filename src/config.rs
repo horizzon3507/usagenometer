@@ -74,10 +74,10 @@ impl ConfigFile {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let raw = fs::read_to_string(path)
-            .with_context(|| format!("read config {}", path.display()))?;
-        let cfg: ConfigFile = toml::from_str(&raw)
-            .with_context(|| format!("parse config {}", path.display()))?;
+        let raw =
+            fs::read_to_string(path).with_context(|| format!("read config {}", path.display()))?;
+        let cfg: ConfigFile =
+            toml::from_str(&raw).with_context(|| format!("parse config {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -86,7 +86,11 @@ impl ConfigFile {
     }
 
     pub fn display_mode(&self) -> DisplayMode {
-        match self.display.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+        match self
+            .display
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+        {
             Some(s) if s == "used" => DisplayMode::Used,
             _ => DisplayMode::Left,
         }
@@ -152,8 +156,7 @@ pub struct Settings {
 
 impl Settings {
     pub fn alert_for(&self, provider_id: &str) -> Option<f64> {
-        self.alert
-            .or_else(|| self.config.alert_for(provider_id))
+        self.alert.or_else(|| self.config.alert_for(provider_id))
     }
 
     /// Hours until exhaustion; CLI flag overrides config.

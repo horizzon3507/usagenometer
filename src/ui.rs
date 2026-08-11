@@ -103,8 +103,12 @@ pub fn print_compact(snapshots: &[ProviderSnapshot], display: DisplayMode) {
         }
         let meter = &snap.meters[0];
         let fraction = match display {
-            DisplayMode::Left => meter.left_percent.or_else(|| meter.percent.map(|p| 1.0 - p)),
-            DisplayMode::Used => meter.percent.or_else(|| meter.left_percent.map(|p| 1.0 - p)),
+            DisplayMode::Left => meter
+                .left_percent
+                .or_else(|| meter.percent.map(|p| 1.0 - p)),
+            DisplayMode::Used => meter
+                .percent
+                .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
         };
         let pct = fraction
             .map(|f| format!("{:.0}%", f * 100.0))
@@ -185,20 +189,25 @@ fn format_provider_header(snap: &ProviderSnapshot, privacy_mode: bool) -> String
 
 fn print_meter(meter: &UsageMeter, display: DisplayMode, color: bool, eta: Option<&str>) {
     let fraction = match display {
-        DisplayMode::Left => meter.left_percent.or_else(|| meter.percent.map(|p| 1.0 - p)),
-        DisplayMode::Used => meter.percent.or_else(|| meter.left_percent.map(|p| 1.0 - p)),
+        DisplayMode::Left => meter
+            .left_percent
+            .or_else(|| meter.percent.map(|p| 1.0 - p)),
+        DisplayMode::Used => meter
+            .percent
+            .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
     };
     let bar = meter_bar(fraction.unwrap_or(0.0), 18);
     let pct = fraction
         .map(|f| format!("{:>3.0}%", f * 100.0))
         .unwrap_or_else(|| "  —".into());
     let reset = format_reset(meter);
-    let eta_s = eta
-        .map(|e| format!("  ·  eta {e}"))
-        .unwrap_or_default();
+    let eta_s = eta.map(|e| format!("  ·  eta {e}")).unwrap_or_default();
     let unit = match meter.unit.as_str() {
         "usd" => {
-            let used = meter.used.map(|u| format!("${u:.2}")).unwrap_or_else(|| "?".into());
+            let used = meter
+                .used
+                .map(|u| format!("${u:.2}"))
+                .unwrap_or_else(|| "?".into());
             let limit = meter
                 .limit
                 .map(|l| format!("${l:.2}"))
@@ -249,11 +258,17 @@ fn format_reset(meter: &UsageMeter) -> String {
             .unwrap_or(0.0);
         let delta = reset_at - now;
         if delta > 0.0 {
-            return format!("  ·  reset {}", fmt_duration(Duration::from_secs_f64(delta)));
+            return format!(
+                "  ·  reset {}",
+                fmt_duration(Duration::from_secs_f64(delta))
+            );
         }
     }
     if let Some(after) = meter.reset_after_seconds.filter(|s| *s > 0.0) {
-        return format!("  ·  reset {}", fmt_duration(Duration::from_secs_f64(after)));
+        return format!(
+            "  ·  reset {}",
+            fmt_duration(Duration::from_secs_f64(after))
+        );
     }
     String::new()
 }
@@ -339,7 +354,11 @@ pub fn print_diff(prev: &[ProviderSnapshot], next: &[ProviderSnapshot], display:
 
 fn meter_fraction(meter: &UsageMeter, display: DisplayMode) -> Option<f64> {
     match display {
-        DisplayMode::Left => meter.left_percent.or_else(|| meter.percent.map(|p| 1.0 - p)),
-        DisplayMode::Used => meter.percent.or_else(|| meter.left_percent.map(|p| 1.0 - p)),
+        DisplayMode::Left => meter
+            .left_percent
+            .or_else(|| meter.percent.map(|p| 1.0 - p)),
+        DisplayMode::Used => meter
+            .percent
+            .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
     }
 }
