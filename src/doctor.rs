@@ -32,6 +32,7 @@ pub fn run(privacy: bool) -> Vec<Check> {
     checks.extend(check_grok(privacy));
     checks.extend(check_antigravity());
     checks.extend(check_xdg());
+    checks.extend(check_token_ledger());
     checks
 }
 
@@ -406,6 +407,79 @@ fn check_antigravity() -> Vec<Check> {
             status: CheckStatus::Warn,
             name: "antigravity oauth env".into(),
             detail: "CLIENT_ID/SECRET unset — refresh may fail".into(),
+        }),
+    }
+    out
+}
+
+/// Token-ledger section: per-agent scan roots found/missing, stored event
+/// counts, and the ledger db itself (path, events, last scan age).
+fn check_token_ledger() -> Vec<Check> {
+    use crate::tokens::{TokenStore, collect};
+
+    let mut out = Vec::new();
+    let store = TokenStore::open().ok();
+    let counts = store
+        .and_then(|s| s.provider_event_counts().ok())
+        .unwrap_or_default();
+    let count_of = |provider: &str| -> u64 {
+        counts
+            .iter()
+            .find(|(p, _)| p == provider)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    };
+
+    for provider in collect::known_providers() {
+        let roots = collect::scan_roots(provider);
+        let found: Vec<PathBuf> = roots.iter().filter(|p| p.exists()).cloned().collect();
+        let events = count_of(provider);
+        if found.is_empty() {
+            out.push(Check {
+                status: CheckStatus::Skip,
+                name: format!("ledger {provider}"),
+                detail: format!("no scan roots ({} missing)", roots.len()),
+            });
+        } else {
+            out.push(Check {
+                status: CheckStatus::Pass,
+                name: format!("ledger {provider}"),
+                detail: format!(
+                    "{} root(s) · {} events · {}",
+                    found.len(),
+                    events,
+                    paths::display_path(&found[0])
+                ),
+            });
+        }
+    }
+
+    let db = paths::history_db();
+    match TokenStore::open() {
+        Ok(store) => {
+            let total: u64 = store
+                .provider_event_counts()
+                .map(|cs| cs.iter().map(|(_, n)| *n).sum())
+                .unwrap_or(0);
+            let age = store
+                .last_scan_unix()
+                .ok()
+                .flatten()
+                .map(|last| {
+                    let secs = (now_secs() - last).max(0.0) as u64;
+                    format!(" · last scan {} ago", crate::ui::fmt_duration_secs(secs))
+                })
+                .unwrap_or_else(|| " · never scanned".to_string());
+            out.push(Check {
+                status: CheckStatus::Pass,
+                name: "token ledger db".into(),
+                detail: format!("{} · {} events{}", paths::display_path(&db), total, age),
+            });
+        }
+        Err(_) => out.push(Check {
+            status: CheckStatus::Warn,
+            name: "token ledger db".into(),
+            detail: format!("could not open {}", paths::display_path(&db)),
         }),
     }
     out

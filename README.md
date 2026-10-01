@@ -150,19 +150,21 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 
 ### Providers
 
-| Provider | Source | What you see |
-|----------|--------|----------------|
-| **Codex** | `~/.codex/auth.json` + ChatGPT WHAM usage API | 5h / weekly limits |
-| **Cursor** | Cursor `state.vscdb` + `cursor.com/api/usage-summary` | Auto + Composer, API |
-| **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools |
-| **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) |
-| **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly |
+| Provider | Source | What you see | Token ledger |
+|----------|--------|----------------|--------------|
+| **Codex** | `~/.codex/auth.json` + ChatGPT WHAM usage API | 5h / weekly limits | — |
+| **Cursor** | Cursor `state.vscdb` + `cursor.com/api/usage-summary` | Auto + Composer, API | `state.vscdb` chat bubbles |
+| **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools | `~/.antigravity` + `~/.gemini` sessions |
+| **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) | — |
+| **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly | `~/.grok` sessions + logs |
+
+The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 
 Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
 Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 
-Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates. The CLI never manufactures a percentage when a provider only exposes status.
+Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates; `ledger` means a local token-usage scanner ships for the provider. The CLI never manufactures a percentage when a provider only exposes status.
 
 ## GNOME Shell extension (beta)
 

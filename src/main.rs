@@ -385,6 +385,9 @@ fn cmd_providers(quiet: bool, verbose: bool) {
             if c.local_history {
                 facts.push("history");
             }
+            if c.token_ledger {
+                facts.push("ledger");
+            }
             line.push_str(&format!("  ·  {}", facts.join(", ")));
         }
         println!("{}", line.with(WHITE));

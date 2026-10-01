@@ -88,8 +88,30 @@ add-zsh-hook precmd precmd_usg
 PROMPT='${usg_line:+$usg_line }%n@%m %1~ %# '
 ```
 
+## Token totals
+
+The local token ledger (see `usg doctor` for scan coverage) records per-agent
+input/output/cache tokens. For a compact prompt segment:
+
+```bash
+# grok 12k · gemini 4k · cursor 31k
+usg tokens --json 2>/dev/null \
+  | jq -r '.[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
+  | paste -sd' · '
+```
+
+Drop the segment when the ledger is empty:
+
+```bash
+seg="$(usg tokens --json 2>/dev/null \
+  | jq -r '.[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
+  | paste -sd' · ')"
+PS1='${seg:+$seg }'"$PS1"
+```
+
 ## Tips
 
 - `usg -c -q` reads a fresh local cache first. Keep `cache_ttl` at 60–300 seconds for a fast prompt; use `cache_ttl = 0` when you explicitly need a live fetch every time.
 - Filter providers: `usg -c -q -p codex -p cursor`.
+- `usg tokens --json` reports recorded ledger events; scanning is incremental, so it is cheap enough for a prompt. Providers without local token records simply have no entries.
 - For bars (waybar / polybar), use the same command as an `exec` / `custom` module with a longer interval (60s+).

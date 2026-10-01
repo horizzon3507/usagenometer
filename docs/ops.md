@@ -35,8 +35,19 @@ Combine with filters: `usg check --fail-under 10 -p codex -p cursor`.
 usg --format prometheus
 ```
 
-Metrics: `usagenometer_up`, `usagenometer_used_ratio`, `usagenometer_left_ratio`
-(labels: `provider`, `meter`, `title`).
+Metrics:
+
+| Metric | Type | Labels | Source |
+|--------|------|--------|--------|
+| `usagenometer_up` | gauge | `provider` | quota fetch |
+| `usagenometer_used_ratio` | gauge | `provider`, `meter`, `title` | quota fetch |
+| `usagenometer_left_ratio` | gauge | `provider`, `meter`, `title` | quota fetch |
+| `usagenometer_tokens_total` | counter | `provider`, `model`, `kind` (`input`/`output`/`cache_read`/`cache_write`) | token ledger |
+| `usagenometer_token_events_total` | counter | `provider` | token ledger |
+| `usagenometer_tokens_last_scan_unixtime` | gauge | — | token ledger |
+
+Each prometheus export first runs a best-effort ledger scan, so the textfile
+doubles as the collector — no separate `usg tokens` run needed.
 
 Minimal scrape (node_exporter textfile or a tiny exporter):
 
@@ -57,6 +68,55 @@ while true; do
   sleep 300
 done
 ```
+
+### Daily token budget alert (systemd timer)
+
+Alert when the ledger records more than `USG_TOKEN_BUDGET` tokens in a day.
+The script sums today's `usagenometer_tokens_total` increase per provider:
+
+`~/.local/bin/usg-token-budget`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+budget="${USG_TOKEN_BUDGET:-2000000}"
+day="$(date +%F)"
+state="${XDG_CACHE_HOME:-$HOME/.cache}/usagenometer/token-baseline-$day"
+now="$(usg -q --format prometheus | awk '
+  $1 ~ /^usagenometer_tokens_total/ { sum += $2 } END { print int(sum) }')"
+prev="$(cat "$state" 2>/dev/null || echo 0)"
+echo "$now" > "$state"
+spent=$((now - prev))
+if (( spent > budget )); then
+  notify-send "usagenometer" "tokens today: $spent > budget $budget"
+fi
+```
+
+```ini
+# ~/.config/systemd/user/usagenometer-tokens.service
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/usg-token-budget
+```
+
+```ini
+# ~/.config/systemd/user/usagenometer-tokens.timer
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+chmod +x ~/.local/bin/usg-token-budget
+systemctl --user daemon-reload
+systemctl --user enable --now usagenometer-tokens.timer
+```
+
+The baseline file is keyed by date, so each day starts a new comparison and a
+missed window backfills on the next fire (`Persistent=true`).
 
 ## systemd user timer (alerts)
 
