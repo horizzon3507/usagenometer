@@ -25,6 +25,16 @@ fn claude_root() -> PathBuf {
         .join(".claude")
 }
 
+/// Full (non-incremental) scan of the transcripts tree.
+pub fn scan() -> Vec<TokenEvent> {
+    collect(&mut ScanOffsets::detached())
+}
+
+/// Roots this scanner reads (for `usg doctor`).
+pub fn scan_roots() -> Vec<PathBuf> {
+    vec![claude_root().join("projects")]
+}
+
 /// Scan Claude Code transcript files; returns newly appended events.
 pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
     let mut events = Vec::new();

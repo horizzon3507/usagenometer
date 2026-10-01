@@ -98,7 +98,12 @@ impl TokenStore {
             CREATE INDEX IF NOT EXISTS idx_token_events_provider_ts ON token_events(provider, ts);
             CREATE TABLE IF NOT EXISTS token_scan_offsets (
                 path TEXT PRIMARY KEY,
-                offset INTEGER NOT NULL DEFAULT 0
+                byte_offset INTEGER NOT NULL DEFAULT 0,
+                mtime REAL
+            );
+            CREATE TABLE IF NOT EXISTS token_scan_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             "#,
         )?;
@@ -187,7 +192,7 @@ impl TokenStore {
     pub(crate) fn scan_offsets(&self) -> Result<HashMap<String, u64>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT path, offset FROM token_scan_offsets")?;
+            .prepare("SELECT path, byte_offset FROM token_scan_offsets")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as u64))
         })?;
@@ -197,13 +202,125 @@ impl TokenStore {
     pub(crate) fn save_scan_offset(&self, path: &str, offset: u64) -> Result<()> {
         self.conn.execute(
             r#"
-            INSERT INTO token_scan_offsets (path, offset) VALUES (?1, ?2)
-            ON CONFLICT(path) DO UPDATE SET offset = excluded.offset
+            INSERT INTO token_scan_offsets (path, byte_offset) VALUES (?1, ?2)
+            ON CONFLICT(path) DO UPDATE SET byte_offset = excluded.byte_offset
             "#,
             params![path, offset as i64],
         )?;
         Ok(())
     }
+
+    /// Stored incremental-scan position for a path: (byte_offset, mtime).
+    ///
+    /// Append-only logs resume at `byte_offset`; whole-file formats are
+    /// re-parsed when size or mtime changed since the recorded offset.
+    pub fn scan_offset(&self, path: &std::path::Path) -> Result<Option<(u64, f64)>> {
+        let key = path.display().to_string();
+        let row = self
+            .conn
+            .query_row(
+                "SELECT byte_offset, mtime FROM token_scan_offsets WHERE path = ?1",
+                params![key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+            )
+            .ok();
+        Ok(row.map(|(off, mtime)| (off.max(0) as u64, mtime)))
+    }
+
+    pub fn set_scan_offset(&self, path: &std::path::Path, byte_offset: u64, mtime: f64) {
+        let _ = self.conn.execute(
+            r#"
+            INSERT INTO token_scan_offsets (path, byte_offset, mtime)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(path) DO UPDATE SET
+                byte_offset = excluded.byte_offset,
+                mtime = excluded.mtime
+            "#,
+            params![path.display().to_string(), byte_offset as i64, mtime],
+        );
+    }
+
+    /// Unix time of the last completed `scan_all`, if any.
+    pub fn last_scan_unix(&self) -> Result<Option<f64>> {
+        let v: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM token_scan_meta WHERE key = 'last_scan_unix'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(v.and_then(|s| s.parse::<f64>().ok()))
+    }
+
+    pub fn record_scan(&self, at_unix: f64) {
+        let _ = self.conn.execute(
+            r#"
+            INSERT INTO token_scan_meta (key, value) VALUES ('last_scan_unix', ?1)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![at_unix.to_string()],
+        );
+    }
+
+    /// Stored events count per provider (for doctor / export).
+    pub fn provider_event_counts(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, COUNT(*) FROM token_events GROUP BY provider ORDER BY provider",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (provider, count) = row?;
+            out.push((provider, count.max(0) as u64));
+        }
+        Ok(out)
+    }
+
+    /// Cumulative totals grouped by (provider, model), for export/reporting.
+    pub fn totals(&self) -> Result<Vec<TokenTotals>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT provider, model,
+                   SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens),
+                   COUNT(*)
+            FROM token_events
+            GROUP BY provider, model
+            ORDER BY provider, model
+            "#,
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(TokenTotals {
+                provider: row.get(0)?,
+                model: row.get(1)?,
+                input_tokens: row.get(2)?,
+                output_tokens: row.get(3)?,
+                cache_read_tokens: row.get(4)?,
+                cache_write_tokens: row.get(5)?,
+                events: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+}
+
+/// Aggregate token/event totals for one (provider, model) pair.
+#[derive(Debug, Clone)]
+pub struct TokenTotals {
+    pub provider: String,
+    pub model: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub events: u64,
 }
 
 /// Scan every provider's local files, record new events, return count.
@@ -221,15 +338,18 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
         let mut batch = match *provider {
             "claude" => collect::claude::collect(&mut offsets),
             "codex" => collect::codex::collect(&mut offsets),
-            "grok" => collect::grok::collect(&mut offsets),
-            "gemini" => collect::gemini::collect(&mut offsets),
-            "cursor" => collect::cursor::collect(&mut offsets),
+            "grok" => collect::grok::scan(),
+            "gemini" => collect::gemini::scan(),
+            "cursor" => collect::cursor::scan(),
+            "antigravity" => collect::antigravity::scan(),
             _ => Vec::new(),
         };
         events.append(&mut batch);
     }
     offsets.flush(store);
-    store.record_events(&events).unwrap_or(0)
+    let n = store.record_events(&events).unwrap_or(0);
+    store.record_scan(now_unix());
+    n
 }
 
 // ---------- reporting helpers (used by `usg tokens`; additive, not part of

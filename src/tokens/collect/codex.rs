@@ -71,6 +71,17 @@ struct Ctx {
     prev_total: Option<UsageTuple>,
 }
 
+/// Full (non-incremental) scan of the rollouts tree.
+pub fn scan() -> Vec<TokenEvent> {
+    collect(&mut ScanOffsets::detached())
+}
+
+/// Roots this scanner reads (for `usg doctor`).
+pub fn scan_roots() -> Vec<PathBuf> {
+    let root = codex_root();
+    vec![root.join("sessions"), root.join("history.jsonl")]
+}
+
 /// Scan Codex rollout files; returns newly appended events.
 pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
     let root = codex_root();

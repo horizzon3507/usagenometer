@@ -2,16 +2,50 @@
 //! cheap: missing dirs yield zero events, malformed lines are skipped, and a
 //! bad file never fails the whole scan.
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
 pub mod grok;
+mod util;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::tokens::TokenStore;
+use crate::tokens::{TokenEvent, TokenStore};
+
+/// Every provider id with a local scanner, in stable order.
+pub fn known_providers() -> &'static [&'static str] {
+    &["claude", "codex", "grok", "gemini", "antigravity", "cursor"]
+}
+
+/// Parse the provider's local files into events (no persistence).
+/// Unknown providers yield an empty vec.
+pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
+    match provider {
+        "claude" => claude::scan(),
+        "codex" => codex::scan(),
+        "grok" => grok::scan(),
+        "gemini" => gemini::scan(),
+        "antigravity" => antigravity::scan(),
+        "cursor" => cursor::scan(),
+        _ => Vec::new(),
+    }
+}
+
+/// Local roots a provider's scanner reads (for `usg doctor`).
+pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
+    match provider {
+        "claude" => claude::scan_roots(),
+        "codex" => codex::scan_roots(),
+        "grok" => grok::scan_roots(),
+        "gemini" => gemini::scan_roots(),
+        "antigravity" => antigravity::scan_roots(),
+        "cursor" => cursor::scan_roots(),
+        _ => Vec::new(),
+    }
+}
 
 /// Per-file byte offsets so repeat scans only read appended data.
 /// Loaded from / flushed to the `token_scan_offsets` table; a full re-scan
@@ -122,12 +156,9 @@ pub(crate) fn appended_lines(path: &Path, offsets: &mut ScanOffsets) -> Vec<Stri
 
 /// RFC3339 timestamp → unix seconds (fraction preserved); tolerant, None on junk.
 pub(crate) fn parse_rfc3339(ts: &str) -> Option<f64> {
-    time::OffsetDateTime::parse(
-        ts.trim(),
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()
-    .map(|dt| dt.unix_timestamp() as f64 + f64::from(dt.nanosecond()) / 1e9)
+    time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339)
+        .ok()
+        .map(|dt| dt.unix_timestamp() as f64 + f64::from(dt.nanosecond()) / 1e9)
 }
 
 /// Project label: basename of the agent `cwd`, else derived from the Claude
