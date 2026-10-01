@@ -64,6 +64,15 @@ fn section(p: ProviderArg) -> String {
                · Monthly — fallback monthly allowance when present.\n\
              Run grok login if auth is missing.\n"
         ),
+        ProviderArg::Kimi => format!(
+            "Kimi\n\
+             Source: ~/.kimi*/credentials/ OAuth → api.kimi.com/coding/v1/usages\n\
+             Meters:\n\
+               · 5h / weekly / monthly limits — Kimi for Coding subscription windows.\n\
+               · Booster wallet — pay-as-you-go balance when the account carries one.\n\
+             Token refresh reuses the CLI's own OAuth client and is persisted back.\n\
+             Run kimi login if auth is missing.\n"
+        ),
     }
 }
 

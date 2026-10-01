@@ -75,6 +75,13 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("grok-4", [3.0, 15.0, 0.75, 3.0]),
     ("grok-3-mini", [0.30, 0.50, 0.075, 0.30]),
     ("grok-3", [3.0, 15.0, 0.75, 3.0]),
+    // Moonshot Kimi — cache write = input, cache read = cached-input rate.
+    // kimi-latest is tiered by context (128k tier); kimi-for-coding / kimi-code
+    // are subscription aliases billed like the kimi-k2 family.
+    ("kimi-latest", [2.00, 5.00, 0.15, 2.00]),
+    ("kimi-k2", [0.60, 2.50, 0.15, 0.60]),
+    ("kimi-for-coding", [0.60, 2.50, 0.15, 0.60]),
+    ("kimi-code", [0.60, 2.50, 0.15, 0.60]),
 ];
 
 /// Vendor / region prefixes seen in front of model ids (litellm, Bedrock, Vertex).
