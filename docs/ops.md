@@ -11,9 +11,12 @@ usg json -q -p cursor | jq '.[0].meters[0].left_percent * 100'
 
 # Fail a script when any enabled provider is not ok
 usg json -q | jq -e 'all(.[]; .status == "ok")' >/dev/null
+
+# Token ledger (when supported): today's in/out totals per provider
+usg tokens --json | jq '{period, totals, by_provider}'
 ```
 
-Field names are snake_case (`left_percent`, `reset_at`, `stale_age_secs`). See `src/providers/types.rs`.
+Field names are snake_case (`left_percent`, `reset_at`, `stale_age_secs`). See `src/providers/types.rs`. The GNOME extension reads `usg tokens --json` (or `usg json --tokens`) once per refresh and hides its Tokens row when the command is unavailable.
 
 ## CI gate
 

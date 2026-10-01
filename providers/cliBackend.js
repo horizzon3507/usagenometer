@@ -3,6 +3,7 @@
  * provider fetch/test. No per-provider HTTP or auth logic lives here.
  */
 
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import {runCommand} from '../lib/asyncSubprocess.js';
@@ -11,15 +12,22 @@ import {
     PROVIDER_LABELS,
     createSnapshot,
     normalizeCliSnapshot,
+    normalizeTokenLedger,
 } from './types.js';
 
 const CLI_CANDIDATES = ['usg', 'usagenometer'];
 const JSON_TIMEOUT_MS = 60000;
 const TEST_TIMEOUT_MS = 45000;
 const LIST_TIMEOUT_MS = 10000;
+const TOKENS_TIMEOUT_MS = 30000;
+const TOKENS_PROBE_TIMEOUT_MS = 10000;
+const TOKENS_CAPABILITY_FILENAME = 'gnome-tokens-capability.json';
 
 /** @type {string|null|undefined} */
 let _resolvedBinary;
+
+/** @type {{bin: string, argv: string[]|null}|undefined} */
+let _tokensCommand;
 
 /**
  * Resolve `usg` or `usagenometer` on PATH (cached).
@@ -40,9 +48,10 @@ export function resolveCliBinary() {
     return null;
 }
 
-/** Clear cached binary path (tests / after install). */
+/** Clear cached binary path and tokens capability (tests / after install). */
 export function resetCliBinaryCache() {
     _resolvedBinary = undefined;
+    _tokensCommand = undefined;
 }
 
 /**
@@ -186,6 +195,135 @@ export async function fetchSnapshotsFromCli(enabledIds) {
             error: message,
             meters: [],
         }));
+    }
+}
+
+function tokensCapabilityPath() {
+    return GLib.build_filenamev([
+        GLib.get_user_cache_dir(),
+        'usagenometer',
+        TOKENS_CAPABILITY_FILENAME,
+    ]);
+}
+
+function binaryMtimeSeconds(bin) {
+    try {
+        const info = Gio.File.new_for_path(bin).query_info(
+            'time::modified',
+            Gio.FileQueryInfoFlags.NONE,
+            null,
+        );
+        const modified = info.get_modification_date_time();
+        return modified ? modified.to_unix() : null;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function readCachedTokensArgv(bin) {
+    try {
+        const path = tokensCapabilityPath();
+        const [ok, contents] = GLib.file_get_contents(path);
+        if (!ok)
+            return undefined;
+        const cached = JSON.parse(new TextDecoder().decode(contents));
+        if (cached?.bin !== bin || cached?.mtime !== binaryMtimeSeconds(bin))
+            return undefined;
+        if (!Array.isArray(cached?.argv) && cached?.argv !== null)
+            return undefined;
+        return cached.argv;
+    } catch (_error) {
+        return undefined;
+    }
+}
+
+function writeCachedTokensArgv(bin, argv) {
+    try {
+        const path = tokensCapabilityPath();
+        GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o700);
+        GLib.file_set_contents(path, JSON.stringify({
+            bin,
+            mtime: binaryMtimeSeconds(bin),
+            argv,
+        }));
+    } catch (_error) {
+        // capability caching is best-effort
+    }
+}
+
+/**
+ * Probe the CLI once for token ledger support and cache the argv to run
+ * (null = unsupported) under the extension cache dir, keyed by binary path +
+ * mtime so an upgraded `usg` re-probes automatically.
+ * @param {string} bin
+ * @returns {Promise<string[]|null>}
+ */
+async function detectTokensArgv(bin) {
+    try {
+        const {status} = await runCommand(
+            [bin, 'tokens', '--help'],
+            {timeoutMs: TOKENS_PROBE_TIMEOUT_MS},
+        );
+        if (status === 0)
+            return ['tokens', '--json'];
+    } catch (_error) {
+        // fall through
+    }
+
+    try {
+        const {stdout, stderr, status} = await runCommand(
+            [bin, 'json', '--help'],
+            {timeoutMs: TOKENS_PROBE_TIMEOUT_MS},
+        );
+        if (status === 0 && /--tokens\b/.test(`${stdout}\n${stderr}`))
+            return ['json', '--tokens'];
+    } catch (_error) {
+        // fall through
+    }
+
+    return null;
+}
+
+async function tokensArgv(bin) {
+    if (_tokensCommand !== undefined && _tokensCommand.bin === bin)
+        return _tokensCommand.argv;
+
+    let argv = readCachedTokensArgv(bin);
+    if (argv === undefined) {
+        argv = await detectTokensArgv(bin);
+        writeCachedTokensArgv(bin, argv);
+    }
+
+    _tokensCommand = {bin, argv};
+    return argv;
+}
+
+/**
+ * Fetch the token ledger via `usg tokens --json` (or `usg json --tokens`).
+ * Returns null — never throws — when the CLI is missing, lacks the tokens
+ * surface, errors out, or the ledger is empty, so callers can hide the row.
+ * @param {{binaryPath?: string|null}} [options]
+ * @returns {Promise<import('./types.js').TokenLedger|null>}
+ */
+export async function fetchTokens({binaryPath = resolveCliBinary()} = {}) {
+    const bin = binaryPath;
+    if (!bin)
+        return null;
+
+    const argv = await tokensArgv(bin);
+    if (!argv)
+        return null;
+
+    try {
+        const {stdout, status} = await runCommand(
+            [bin, ...argv],
+            {timeoutMs: TOKENS_TIMEOUT_MS},
+        );
+        if (status !== 0)
+            return null;
+        return normalizeTokenLedger(JSON.parse(stdout.trim() || 'null'));
+    } catch (_error) {
+        return null;
     }
 }
 

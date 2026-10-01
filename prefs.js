@@ -113,6 +113,19 @@ class UsagenometerPreferencesPage extends Adw.PreferencesPage {
         });
         group.add(panelRow);
 
+        const tokensRow = new Adw.SwitchRow({
+            title: _('Show token usage'),
+            subtitle: _('Token ledger row from usg tokens --json; hidden when the CLI has no ledger.'),
+            active: this._settings.get_boolean('show-tokens'),
+        });
+        this._settings.bind(
+            'show-tokens',
+            tokensRow,
+            'active',
+            Gio.SettingsBindFlags.DEFAULT,
+        );
+        group.add(tokensRow);
+
         const providerIds = Object.values(PROVIDER_IDS);
         const primaryRow = new Adw.ComboRow({
             title: _('Primary provider'),

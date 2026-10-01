@@ -168,6 +168,8 @@ Use `usg providers --verbose` to see the provider contract. A `quota` is a verif
 
 The top-bar extension is a **thin client**: it runs `usg json` / `usg test` and renders the panel. Install the CLI on PATH first. Compatible with GNOME Shell `45`–`50`.
 
+When `usg` supports `usg tokens --json`, the dropdown also shows a **Tokens** row (in/out totals + per-provider lines). It probes the CLI once, caches the result under `~/.cache/usagenometer/`, and hides the row entirely when the command is missing or the ledger is empty — toggle it off in preferences via **Show token usage** (`show-tokens`).
+
 ```fish
 cd ~/usagenometer
 

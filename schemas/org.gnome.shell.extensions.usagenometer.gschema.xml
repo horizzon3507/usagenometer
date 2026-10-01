@@ -27,5 +27,10 @@
       <summary>Primary provider</summary>
       <description>Provider used for the panel label when panel mode is primary.</description>
     </key>
+    <key name="show-tokens" type="b">
+      <default>true</default>
+      <summary>Show token usage</summary>
+      <description>Show the token ledger row from usg tokens --json in the dropdown menu (hidden when the CLI has no ledger).</description>
+    </key>
   </schema>
 </schemalist>
