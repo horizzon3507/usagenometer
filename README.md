@@ -182,6 +182,7 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 | **Droid** | — | tokens only | `~/.factory/sessions` + `<project>/.factory/sessions` |
 | **Pi** | — (ledger only) | — | `~/.pi/agent` sessions |
 | **Kimi** | `~/.kimi*/credentials/` OAuth → `api.kimi.com/coding/v1/usages` | 5h / weekly / monthly + booster wallet | `~/.kimi` + `~/.kimi-code` wire.jsonl |
+| **Devin (local)** | ledger only (no quota meter) | — | Devin CLI `devin/cli/sessions.db` + `transcripts/*.json` |
 
 The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 

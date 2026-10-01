@@ -348,6 +348,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
             "droid" => collect::droid::scan(),
             "pi" => collect::pi::scan(),
             "kimi" => collect::kimi::scan(),
+            "devin-local" => collect::devin_local::scan(),
             _ => Vec::new(),
         };
         events.append(&mut batch);

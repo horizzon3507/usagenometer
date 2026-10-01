@@ -99,6 +99,13 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        "devin-local" => ProviderCapabilities {
+            real_quota: false,
+            money_balance: false,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: true,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -122,6 +129,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "droid" => "Droid",
         "pi" => "Pi",
         "kimi" => "Kimi",
+        "devin-local" => "Devin (local)",
         _ => "Unknown",
     }
 }

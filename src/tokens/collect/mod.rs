@@ -7,6 +7,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod droid;
+pub mod devin_local;
 pub mod gemini;
 pub mod glm;
 pub mod grok;
@@ -36,6 +37,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "droid",
         "pi",
         "kimi",
+        "devin-local",
     ]
 }
 
@@ -55,6 +57,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "droid" => droid::scan(),
         "pi" => pi::scan(),
         "kimi" => kimi::scan(),
+        "devin-local" => devin_local::scan(),
         _ => Vec::new(),
     }
 }
@@ -74,6 +77,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "droid" => droid::scan_roots(),
         "pi" => pi::scan_roots(),
         "kimi" => kimi::scan_roots(),
+        "devin-local" => devin_local::scan_roots(),
         _ => Vec::new(),
     }
 }
