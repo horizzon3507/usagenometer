@@ -34,6 +34,25 @@ Older GNOME Shell builds used plain integer tags (`v3`…`v9`) before the per-su
 
 </details>
 
+## v0.1.5m-beta · 01/10/2026
+
+Local token ledger across 13 AI coding agents: per-model, per-project and per-day token burn with USD cost, budget gates, a tokscale-style TUI tab and a GNOME Tokens row — alongside the existing quota meters. This version was made for both GNOME Shell and CLI with a beta release channel on 01/10/2026 (v0.1.5m-beta).
+
+### GNOME Shell
+
+- New "Tokens" row in the panel driven by `usg tokens --json`, showing today's token burn; hidden gracefully when the installed `usg` predates the ledger.
+- `metadata.json` version → `4`.
+
+### CLI
+
+- `usg tokens` — a local token ledger that scans agent session files into SQLite: period/day/model/project/session breakdowns, `--json`, `--privacy` redaction and incremental rescans with per-event dedup.
+- Ledger scanners for 13 providers: Claude Code, Codex, Grok, Gemini, Antigravity, Cursor (state.vscdb), OpenCode, GLM (z.ai via Claude transcripts), OMP, Droid (Factory), Pi, Kimi (kimi-cli + kimi-code) and Devin CLI (`devin/cli/sessions.db` + ATIF transcripts).
+- `usg tokens --cost` — per-model USD spend from a built-in pricing table (overridable via config); `usg check --budget-usd` exits non-zero when a period's spend crosses a budget.
+- `usg tui` gains a Tokens tab with per-model/project breakdown and a 14-day usage chart.
+- New quota meters: GLM via api.z.ai (5-hour / weekly), Kimi via api.kimi.com (5-hour / weekly / monthly + booster, with OAuth token refresh), and Devin Cloud (ACU consumption vs organization cap via the Devin API).
+- `usg providers --verbose` reports the extended provider contract (`token_ledger`, `real_quota`) so consumers can distinguish verified meter types.
+- `--format prometheus` exports `usagenometer_tokens_total`, `usagenometer_token_events_total` and `usagenometer_tokens_last_scan_unixtime` series for scraping.
+
 ## v0.1.4-beta · 11/08/2026
 
 Fast local snapshots, durable quota alerts, and an actionable local runway view. This version was made for CLI with a beta release channel on 11/08/2026 (v0.1.4-beta).

@@ -2,7 +2,7 @@
   "uuid": "usagenometer@horizzon3507",
   "name": "Usagenometer (beta)",
   "description": "[beta] GNOME top-bar AI usage meters via the usagenometer CLI (usg json). Codex, Cursor, Antigravity, Claude, Grok — install usg on PATH. Prefer the CLI for day-to-day use.",
-  "version": 3,
+  "version": 4,
   "shell-version": [
     "45",
     "46",
