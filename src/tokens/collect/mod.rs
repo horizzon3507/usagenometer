@@ -6,6 +6,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod droid;
 pub mod gemini;
 pub mod glm;
 pub mod grok;
@@ -30,6 +31,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "opencode",
         "glm",
         "omp",
+        "droid",
     ]
 }
 
@@ -46,6 +48,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "opencode" => opencode::scan(),
         "glm" => glm::scan(),
         "omp" => omp::scan(),
+        "droid" => droid::scan(),
         _ => Vec::new(),
     }
 }
@@ -62,6 +65,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "opencode" => opencode::scan_roots(),
         "glm" => glm::scan_roots(),
         "omp" => omp::scan_roots(),
+        "droid" => droid::scan_roots(),
         _ => Vec::new(),
     }
 }

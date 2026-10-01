@@ -88,6 +88,13 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("glm-4-5-airx", [1.10, 4.50, 0.22, 1.10]),
     ("glm-4-5-air", [0.20, 1.10, 0.03, 0.20]),
     ("glm-4-5", [0.60, 2.20, 0.11, 0.60]),
+    // Zhipu GLM (z.ai published rates) — Droid Core pool on Factory.
+    ("glm-5-1", [1.40, 4.40, 0.26, 1.40]),
+    ("glm-5", [1.0, 3.20, 0.20, 1.0]),
+    ("glm-4-7", [0.60, 2.20, 0.11, 0.60]),
+    ("glm-4-6", [0.60, 2.20, 0.11, 0.60]),
+    ("glm-4-5-air", [0.20, 1.10, 0.03, 0.20]),
+    ("glm-4-5", [0.60, 2.20, 0.11, 0.60]),
 ];
 
 /// Vendor / region prefixes seen in front of model ids (litellm, Bedrock, Vertex).

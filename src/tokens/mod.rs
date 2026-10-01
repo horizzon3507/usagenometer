@@ -345,6 +345,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
             "opencode" => collect::opencode::scan(),
             "glm" => collect::glm::scan(),
             "omp" => collect::omp::scan(),
+            "droid" => collect::droid::scan(),
             _ => Vec::new(),
         };
         events.append(&mut batch);

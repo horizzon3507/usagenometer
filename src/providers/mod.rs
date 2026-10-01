@@ -74,6 +74,15 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        // Factory's only documented usage endpoints are org-admin credit
+        // limits behind a `fk-` API key — nothing the local CLI auth can read.
+        "droid" => ProviderCapabilities {
+            real_quota: false,
+            money_balance: false,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: true,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -94,6 +103,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "opencode" => "OpenCode",
         "glm" => "GLM",
         "omp" => "OMP",
+        "droid" => "Droid",
         _ => "Unknown",
     }
 }
