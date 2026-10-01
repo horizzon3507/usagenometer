@@ -10,6 +10,7 @@ pub mod gemini;
 pub mod glm;
 pub mod grok;
 pub mod opencode;
+pub mod omp;
 mod util;
 
 use std::collections::HashMap;
@@ -28,6 +29,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "cursor",
         "opencode",
         "glm",
+        "omp",
     ]
 }
 
@@ -43,6 +45,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "cursor" => cursor::scan(),
         "opencode" => opencode::scan(),
         "glm" => glm::scan(),
+        "omp" => omp::scan(),
         _ => Vec::new(),
     }
 }
@@ -58,6 +61,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "cursor" => cursor::scan_roots(),
         "opencode" => opencode::scan_roots(),
         "glm" => glm::scan_roots(),
+        "omp" => omp::scan_roots(),
         _ => Vec::new(),
     }
 }
