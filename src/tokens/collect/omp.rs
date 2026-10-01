@@ -9,13 +9,14 @@
 //!   files under a dir named after the parent stem — each a complete session
 //!   file with its own header, so the recursive `*.jsonl` scan finds them.
 //!
-//! Roots mirror omp's own resolution (`pi-utils/dirs`):
-//! - `PI_CODING_AGENT_DIR` → `<dir>/sessions` (default-profile override)
-//! - `OMP_PROFILE`/`PI_PROFILE` → `~/<PI_CONFIG_DIR|.omp>/profiles/<n>/agent`
-//! - `PI_CONFIG_DIR` → `~/<dir>/agent` (config dir name, default `.omp`)
+//! Roots mirror omp's own resolution (`pi-utils/dirs`), restricted to omp's
+//! own env (`OMP_PROFILE`). `~/.pi` and the `PI_*` overrides
+//! (`PI_CONFIG_DIR`/`PI_CODING_AGENT_DIR`/`PI_PROFILE`) are covered by the
+//! upstream-pi scanner — claiming them here too would count the same
+//! records twice under different providers.
+//! - `OMP_PROFILE` → `~/.omp/profiles/<n>/agent` + `$XDG_DATA_HOME/omp/profiles/<n>`
 //! - `$XDG_DATA_HOME/omp` — XDG flattens the `agent/` prefix away
-//! - `~/.omp/agent` default; `~/.pi/agent` for upstream-pi leftovers (same
-//!   record format — the fork kept it byte-identical).
+//! - `~/.omp/agent` default
 //!
 //! File format: JSONL. Current files open with a fixed-width 256-byte
 //! `{"type":"title",...}` slot, then the `{"type":"session","id","timestamp",
@@ -66,17 +67,11 @@ pub fn scan() -> Vec<TokenEvent> {
     events
 }
 
-/// Agent dirs whose `sessions/` subtree is scanned.
+/// Agent dirs whose `sessions/` subtree is scanned. `~/.pi` and every
+/// `PI_*` override belong to the upstream-pi scanner — not claimed here.
 pub fn scan_roots() -> Vec<PathBuf> {
     let home = util::home();
-    // PI_CONFIG_DIR is a config dir *name* relative to home (default ".omp").
-    let config_dir = std::env::var("PI_CONFIG_DIR")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .map(|p| if p.is_absolute() { p } else { home.join(p) })
-        .unwrap_or_else(|| home.join(".omp"));
+    let config_dir = home.join(".omp");
 
     let xdg_omp = std::env::var("XDG_DATA_HOME")
         .ok()
@@ -86,27 +81,21 @@ pub fn scan_roots() -> Vec<PathBuf> {
 
     let profile = std::env::var("OMP_PROFILE")
         .ok()
-        .or_else(|| std::env::var("PI_PROFILE").ok())
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty() && v != "default" && !v.contains('/') && !v.contains(".."));
 
     let mut roots = Vec::new();
     if let Some(name) = profile {
-        // Named profiles derive their own agent dir and ignore the
-        // PI_CODING_AGENT_DIR override (mirroring pi-utils).
+        // Named profiles derive their own agent dir (mirroring pi-utils).
         roots.push(config_dir.join("profiles").join(&name).join("agent"));
         if let Some(xdg) = xdg_omp {
             roots.push(xdg.join("profiles").join(&name));
         }
     } else {
-        match std::env::var("PI_CODING_AGENT_DIR") {
-            Ok(dir) if !dir.trim().is_empty() => roots.push(PathBuf::from(dir.trim())),
-            _ => roots.push(config_dir.join("agent")),
-        }
+        roots.push(config_dir.join("agent"));
         if let Some(xdg) = xdg_omp {
             roots.push(xdg);
         }
-        roots.push(home.join(".pi").join("agent"));
     }
     roots.sort();
     roots.dedup();
@@ -424,6 +413,14 @@ mod tests {
         assert_eq!(slug_project("--work-proj--"), Some("proj".into()));
         assert_eq!(slug_project("-tmp-build-thing-"), Some("thing".into()));
         assert_eq!(slug_project("-"), None);
+    }
+
+    #[test]
+    fn roots_never_reach_pi_dirs() {
+        // `~/.pi` belongs to the upstream-pi scanner.
+        for root in scan_roots() {
+            assert!(!root.components().any(|c| c.as_os_str() == ".pi"));
+        }
     }
 
     #[test]
