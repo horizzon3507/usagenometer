@@ -50,6 +50,15 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        // opencode ships a token-ledger scanner only — its plan quotas
+        // (zen/go) are out of scope and it exposes no quota API.
+        "opencode" => ProviderCapabilities {
+            real_quota: false,
+            money_balance: false,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: true,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -67,6 +76,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "antigravity" => "Antigravity",
         "claude" => "Claude",
         "grok" => "Grok",
+        "opencode" => "OpenCode",
         _ => "Unknown",
     }
 }
