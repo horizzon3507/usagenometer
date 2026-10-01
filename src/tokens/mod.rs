@@ -343,6 +343,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
             "cursor" => collect::cursor::scan(),
             "antigravity" => collect::antigravity::scan(),
             "opencode" => collect::opencode::scan(),
+            "glm" => collect::glm::scan(),
             _ => Vec::new(),
         };
         events.append(&mut batch);

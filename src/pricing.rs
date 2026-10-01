@@ -75,6 +75,19 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("grok-4", [3.0, 15.0, 0.75, 3.0]),
     ("grok-3-mini", [0.30, 0.50, 0.075, 0.30]),
     ("grok-3", [3.0, 15.0, 0.75, 3.0]),
+    // z.ai GLM — cached-input rate documented per model; cache write = input
+    // (no documented write premium; free-tier models priced at 0).
+    ("glm-5-1", [1.40, 4.40, 0.26, 1.40]),
+    ("glm-5", [1.0, 3.20, 0.20, 1.0]),
+    ("glm-4-7-flashx", [0.07, 0.40, 0.01, 0.07]),
+    ("glm-4-7-flash", [0.0, 0.0, 0.0, 0.0]),
+    ("glm-4-7", [0.60, 2.20, 0.11, 0.60]),
+    ("glm-4-6", [0.60, 2.20, 0.11, 0.60]),
+    ("glm-4-5-x", [2.20, 8.90, 0.45, 2.20]),
+    ("glm-4-5-flash", [0.0, 0.0, 0.0, 0.0]),
+    ("glm-4-5-airx", [1.10, 4.50, 0.22, 1.10]),
+    ("glm-4-5-air", [0.20, 1.10, 0.03, 0.20]),
+    ("glm-4-5", [0.60, 2.20, 0.11, 0.60]),
 ];
 
 /// Vendor / region prefixes seen in front of model ids (litellm, Bedrock, Vertex).

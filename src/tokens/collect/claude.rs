@@ -13,7 +13,9 @@ use serde_json::Value;
 use crate::tokens::TokenEvent;
 use crate::tokens::collect::{ScanOffsets, appended_lines, jsonl_files, parse_rfc3339, project_name};
 
-fn claude_root() -> PathBuf {
+/// `~/.claude` (or `$CLAUDE_CONFIG_DIR`). Shared with `collect::glm`, whose
+/// sessions live in the same tree.
+pub(crate) fn claude_root() -> PathBuf {
     if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
@@ -53,8 +55,23 @@ pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
     events
 }
 
+/// GLM-family model ids served through z.ai's Claude-compatible endpoint
+/// (glm-4.5, glm-4.6, glm-4.5-air, ...). The GLM Coding Plan writes these
+/// transcripts into this same tree; they ledger as provider `glm`.
+pub(crate) fn is_glm_model(model: &str) -> bool {
+    let tail = model.trim().rsplit('/').next().unwrap_or("");
+    tail.to_ascii_lowercase().starts_with("glm-")
+}
+
 fn parse_line(line: &str, slug: &str) -> Option<TokenEvent> {
     let v: Value = serde_json::from_str(line).ok()?;
+    let event = parse_record(&v, slug)?;
+    (!event.model.as_deref().is_some_and(is_glm_model)).then_some(event)
+}
+
+/// One Claude-transcript record → TokenEvent (provider `claude`).
+/// Shared with `collect::glm`, which keeps GLM-family models instead.
+pub(crate) fn parse_record(v: &Value, slug: &str) -> Option<TokenEvent> {
     if v.get("type").and_then(Value::as_str) != Some("assistant") {
         return None;
     }
@@ -117,6 +134,14 @@ mod tests {
         assert_eq!(e.cache_write_tokens, 56);
         assert_eq!(e.cache_read_tokens, 78);
         assert!(e.ts_unix > 0.0);
+    }
+
+    #[test]
+    fn skips_glm_family_records() {
+        let line = r#"{"type":"assistant","uuid":"g1","sessionId":"s","timestamp":"2026-09-30T10:00:00Z","message":{"model":"glm-4.6","usage":{"input_tokens":10,"output_tokens":5}}}"#;
+        assert!(parse_line(line, "s").is_none(), "glm records ledger as glm");
+        assert!(is_glm_model("glm-4.5-air"));
+        assert!(!is_glm_model("claude-sonnet-4-5"));
     }
 
     #[test]
