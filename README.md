@@ -53,6 +53,9 @@ usg -c -q                   # compact one-liner (statuslines)
 usg status -p codex -p cursor
 usg watch --interval 60 --alert 80 --alert-eta 2 --diff
 usg check --fail-under 10   # exit 2 if remaining % below threshold
+usg check --budget-usd 5 --period day   # exit 2 when today's spend >= $5
+usg tokens                  # token ledger totals for today
+usg tokens --period week --by model --cost
 usg test
 usg doctor                  # auth paths / expiry (no secrets)
 usg explain [provider]
@@ -87,7 +90,8 @@ usg --help
 |---------|-------------|
 | `status` (`st`) | Show meters (default). Supports `--compact`. |
 | `watch` (`w`) | Refresh on an interval. `--diff` shows only changes. |
-| `check` | Exit `2` if any meter **remaining** % is below `--fail-under` (default 10). |
+| `check` | Exit `2` if any meter **remaining** % is below `--fail-under` (default 10). `--budget-usd N --period day\|week\|month` also gates token spend (both must pass). |
+| `tokens` (`tok`) | Token ledger totals: `--period today\|week\|month\|all`, `--by model\|project\|session\|day`, `--since`, `--cost` adds a USD column + total. |
 | `test` (`t`) | Auth + API connectivity |
 | `providers` (`ls`) | List providers |
 | `json` (`j`) | Dump snapshots as JSON |
@@ -115,6 +119,14 @@ compact = false
 notify = false
 cache_ttl = 300                # seconds; fresh local snapshot before network fetch
 history = true                 # persist snapshots for ETA / history
+budget_usd = 5                 # `usg check` token spend gate (optional)
+budget_period = "week"         # day | week | month (optional, default day)
+
+[pricing."my-local-model"]     # USD per 1M tokens; overrides embedded table
+input = 1.0
+output = 2.0
+# cache_read / cache_write optional — default to the embedded entry's
+# rates when the model is known, else to `input`
 
 [alerts]
 codex = 90                     # per-provider used-% overrides
@@ -125,7 +137,7 @@ Data / cache:
 
 | Path | Use |
 |------|-----|
-| `~/.local/share/usagenometer/history.sqlite3` | Snapshot history |
+| `~/.local/share/usagenometer/history.sqlite3` | Snapshot history + token ledger (`token_events`) |
 | `~/.cache/usagenometer/snapshots/` | Short cache for stale fallback |
 
 ### Statuslines
@@ -135,6 +147,8 @@ Compact output for prompts and bars: `usg -c -q`. Ready snippets for Starship, o
 ### Scripting & ops
 
 - `usg check --fail-under 10` — **fail when remaining &lt; 10%** (used &gt; 90%). Exit `2` on failure.
+- `usg check --budget-usd 5 --period day` — **fail when this day's token cost ≥ $5**. Exit `2`; composes with `--fail-under`. Windows are UTC calendar day / ISO week (Mon) / calendar month.
+- `usg tokens --cost --json` — token totals with a `cost_usd` field per row and in `totals`; events on models with no known price are counted in `unpriced_events` and excluded from cost.
 - `usg --format prometheus` — Prometheus text exposition (`usagenometer_used_ratio`, `usagenometer_left_ratio`, `usagenometer_up`).
 - `usg json` + `jq` recipes, CI gates, Prometheus scrape, systemd user timers → **[docs/ops.md](docs/ops.md)**.
 - Example units: [`packaging/systemd/`](packaging/systemd/).
@@ -161,6 +175,8 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
 Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
+
+Token costs use an embedded USD-per-1M-token price table (Claude, GPT-5/Codex, Gemini, Grok families) with date/vendor-tolerant model matching; unknown models are simply not priced. Override or extend it with `[pricing."<model>"]` in config.
 
 Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates. The CLI never manufactures a percentage when a provider only exposes status.
 

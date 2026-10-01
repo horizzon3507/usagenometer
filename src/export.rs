@@ -93,10 +93,37 @@ pub fn check_fail_under(snaps: &[ProviderSnapshot], fail_under: f64) -> (bool, V
     (ok, messages)
 }
 
+/// Exit non-zero when the period's total token cost reaches `budget_usd`
+/// (`total >= budget`, so a `0` budget fails on any recorded spend).
+pub fn check_budget_usd(total_usd: f64, budget_usd: f64, window: &str) -> (bool, Vec<String>) {
+    if total_usd >= budget_usd {
+        return (
+            false,
+            vec![format!(
+                "token spend this {window} ${total_usd:.4} reached budget ${budget_usd:.2}"
+            )],
+        );
+    }
+    (true, Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::providers::types::{ProviderSnapshot, meter_from_used_percent};
+
+    #[test]
+    fn budget_triggers_at_threshold() {
+        let (ok, msgs) = check_budget_usd(10.0, 10.0, "week");
+        assert!(!ok);
+        assert!(!msgs.is_empty());
+        let (ok, _) = check_budget_usd(9.99, 10.0, "week");
+        assert!(ok);
+        let (ok, _) = check_budget_usd(0.0, 0.0, "day");
+        assert!(!ok); // 0 >= 0: spend met the budget
+        let (ok, _) = check_budget_usd(0.0, 5.0, "month");
+        assert!(ok);
+    }
 
     #[test]
     fn fail_under_triggers() {

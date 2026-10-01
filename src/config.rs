@@ -39,6 +39,12 @@ pub struct ConfigFile {
     /// Persist history snapshots on fetch (default true).
     #[serde(default = "default_true")]
     pub history: bool,
+    /// Default USD budget for `usg check` (CLI `--budget-usd` wins).
+    pub budget_usd: Option<f64>,
+    /// Default budget window: "day" | "week" | "month" (CLI `--period` wins).
+    pub budget_period: Option<String>,
+    /// Per-model USD-per-1M-token pricing overrides: `[pricing."<model>"]`.
+    pub pricing: HashMap<String, crate::pricing::ModelPriceOverride>,
 }
 
 fn default_true() -> bool {
@@ -60,6 +66,9 @@ impl Default for ConfigFile {
             notify: false,
             cache_ttl: None,
             history: true,
+            budget_usd: None,
+            budget_period: None,
+            pricing: HashMap::new(),
         }
     }
 }
@@ -118,6 +127,19 @@ impl ConfigFile {
             .copied()
             .or(self.alert)
             .filter(|v| v.is_finite() && *v >= 0.0)
+    }
+
+    /// Default USD budget, if configured.
+    pub fn budget(&self) -> Option<f64> {
+        self.budget_usd.filter(|v| v.is_finite() && *v >= 0.0)
+    }
+
+    /// Default budget window ("day" | "week" | "month"), if configured.
+    pub fn budget_window(&self) -> Option<String> {
+        self.budget_period
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| matches!(s.as_str(), "day" | "week" | "month"))
     }
 }
 
@@ -209,5 +231,31 @@ codex = 90
         assert_eq!(cfg.alert, Some(80.0));
         assert_eq!(cfg.alert_for("codex"), Some(90.0));
         assert_eq!(cfg.alert_for("cursor"), Some(80.0));
+    }
+
+    #[test]
+    fn parses_budget_and_pricing() {
+        let raw = r#"
+budget_usd = 5
+budget_period = "week"
+
+[pricing."my-model"]
+input = 1.0
+output = 2.0
+"#;
+        let cfg: ConfigFile = toml::from_str(raw).unwrap();
+        assert_eq!(cfg.budget(), Some(5.0));
+        assert_eq!(cfg.budget_window().as_deref(), Some("week"));
+        let o = cfg.pricing.get("my-model").unwrap();
+        assert_eq!(o.input, Some(1.0));
+        assert_eq!(o.output, Some(2.0));
+        assert_eq!(o.cache_read, None);
+    }
+
+    #[test]
+    fn budget_window_rejects_unknown() {
+        let raw = "budget_period = \"year\"";
+        let cfg: ConfigFile = toml::from_str(raw).unwrap();
+        assert_eq!(cfg.budget_window(), None);
     }
 }

@@ -6,15 +6,18 @@ use std::io;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use clap_complete::{Shell, generate};
 use crossterm::style::Stylize;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{ExecutableCommand, cursor};
+use time::{Duration as TimeDuration, OffsetDateTime, Time};
 
 use usagenometer::alerts::{self, AlertStateStore};
-use usagenometer::cli::{Cli, Command, OutputFormat, ProviderArg, ShellArg};
+use usagenometer::cli::{
+    BudgetPeriod, Cli, Command, OutputFormat, ProviderArg, ShellArg, TokenGroup, TokenPeriod,
+};
 use usagenometer::config::{ConfigFile, Settings};
 use usagenometer::doctor;
 use usagenometer::eta;
@@ -22,9 +25,11 @@ use usagenometer::explain;
 use usagenometer::export;
 use usagenometer::history::{self, HistoryStore};
 use usagenometer::paths;
+use usagenometer::pricing;
 use usagenometer::privacy;
 use usagenometer::providers::{self, resolve_providers};
 use usagenometer::routing;
+use usagenometer::tokens::{self, TokenEvent};
 use usagenometer::ui::{
     StatusOptions, WHITE, banner, bin_name, flush_stdout, print_compact, print_diff, print_error,
     print_info, print_status_opts, print_success, print_warn,
@@ -73,8 +78,12 @@ fn run() -> Result<()> {
         Some(Command::Json) => {
             cmd_json(&settings)?;
         }
-        Some(Command::Check { fail_under }) => {
-            cmd_check(&settings, fail_under)?;
+        Some(Command::Check {
+            fail_under,
+            budget_usd,
+            period,
+        }) => {
+            cmd_check(&settings, fail_under, budget_usd, period)?;
         }
         Some(Command::Doctor) => {
             let checks = doctor::run(settings.privacy);
@@ -93,6 +102,14 @@ fn run() -> Result<()> {
             runway,
         }) => {
             cmd_history(&settings, limit, provider, spark, runway)?;
+        }
+        Some(Command::Tokens {
+            period,
+            by,
+            since,
+            cost,
+        }) => {
+            cmd_tokens(&settings, period, by, since, cost)?;
         }
         Some(Command::Config { dump }) => {
             cmd_config(&settings, dump);
@@ -397,7 +414,12 @@ fn cmd_json(settings: &Settings) -> Result<()> {
     emit_json(&snaps, settings.pretty)
 }
 
-fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
+fn cmd_check(
+    settings: &Settings,
+    fail_under: f64,
+    budget_usd: Option<f64>,
+    period: Option<BudgetPeriod>,
+) -> Result<()> {
     let snaps = fetch(settings);
     if settings.json {
         emit_json(&snaps, settings.pretty)?;
@@ -416,7 +438,40 @@ fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
             },
         );
     }
-    let (ok, messages) = export::check_fail_under(&snaps, fail_under);
+    let (mut ok, mut messages) = export::check_fail_under(&snaps, fail_under);
+
+    // Token budget gate: CLI flag wins over config.toml `budget_usd`/`budget_period`.
+    if let Some(budget) = budget_usd.or_else(|| settings.config.budget()) {
+        let window = period
+            .map(|p| p.id().to_string())
+            .or_else(|| settings.config.budget_window())
+            .unwrap_or_else(|| "day".to_string());
+        let provider_ids: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
+        let scanned = tokens::scan_all(&provider_ids);
+        let store = tokens::TokenStore::open()?;
+        let events =
+            events_for_providers(&store, Some(budget_window_start(&window)), &provider_ids)?;
+        let (total, unpriced) = pricing::total_cost_usd(&events, &settings.config.pricing);
+        if !settings.quiet && !settings.json {
+            let mut line = format!(
+                "tokens {window} · ${total:.4} / ${budget:.2} budget · {} events",
+                events.len()
+            );
+            if unpriced > 0 {
+                line.push_str(&format!(" · {unpriced} unpriced"));
+            }
+            if scanned > 0 {
+                line.push_str(&format!(" · +{scanned} scanned"));
+            }
+            print_info(&line);
+        }
+        let (budget_ok, budget_msgs) = export::check_budget_usd(total, budget, &window);
+        if !budget_ok {
+            ok = false;
+            messages.extend(budget_msgs);
+        }
+    }
+
     if !ok {
         for m in &messages {
             print_error(m);
@@ -427,6 +482,296 @@ fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
         print_success(&format!("all meters above {fail_under:.0}% remaining"));
     }
     Ok(())
+}
+
+/// Events since `since_unix`, filtered to `provider_ids` (empty = all).
+fn events_for_providers(
+    store: &tokens::TokenStore,
+    since_unix: Option<f64>,
+    provider_ids: &[&str],
+) -> Result<Vec<TokenEvent>> {
+    let events = store.events_since(since_unix, None)?;
+    if provider_ids.is_empty() {
+        return Ok(events);
+    }
+    Ok(events
+        .into_iter()
+        .filter(|ev| provider_ids.contains(&ev.provider.as_str()))
+        .collect())
+}
+
+/// UTC start of the current day / week (Mon) / month, as unix seconds.
+fn budget_window_start(window: &str) -> f64 {
+    match window {
+        "week" => week_start_unix(),
+        "month" => month_start_unix(),
+        _ => day_start_unix(),
+    }
+}
+
+fn day_start_unix() -> f64 {
+    OffsetDateTime::now_utc()
+        .date()
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn week_start_unix() -> f64 {
+    let now = OffsetDateTime::now_utc();
+    let days_back = i64::from(now.weekday().number_from_monday()) - 1;
+    (now.date() - TimeDuration::days(days_back))
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn month_start_unix() -> f64 {
+    let now = OffsetDateTime::now_utc();
+    now.date()
+        .replace_day(1)
+        .unwrap_or_else(|_| now.date())
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn token_period_start(period: TokenPeriod) -> Option<f64> {
+    match period {
+        TokenPeriod::Today => Some(day_start_unix()),
+        TokenPeriod::Week => Some(week_start_unix()),
+        TokenPeriod::Month => Some(month_start_unix()),
+        TokenPeriod::All => None,
+    }
+}
+
+/// `--since` accepts unix seconds or `YYYY-MM-DD` (UTC midnight).
+fn parse_since(s: &str) -> Result<f64> {
+    let s = s.trim();
+    if let Ok(ts) = s.parse::<f64>() {
+        return Ok(ts);
+    }
+    let fmt =
+        time::format_description::parse("[year]-[month]-[day]").context("parse date format")?;
+    let date = time::Date::parse(s, &fmt)
+        .with_context(|| format!("invalid --since '{s}' (use unix seconds or YYYY-MM-DD)"))?;
+    Ok(date.with_time(Time::MIDNIGHT).assume_utc().unix_timestamp() as f64)
+}
+
+fn fmt_day_key(ts_unix: f64) -> String {
+    OffsetDateTime::from_unix_timestamp(ts_unix as i64)
+        .map(|dt| dt.date().to_string())
+        .unwrap_or_default()
+}
+
+fn fmt_int(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn fmt_usd(usd: f64) -> String {
+    format!("${usd:.4}")
+}
+
+#[derive(Default)]
+struct TokenAgg {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    events: usize,
+    cost: f64,
+    unpriced: usize,
+}
+
+impl TokenAgg {
+    fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_write
+    }
+
+    fn add(&mut self, ev: &TokenEvent, cost: Option<f64>) {
+        self.input += ev.input_tokens;
+        self.output += ev.output_tokens;
+        self.cache_read += ev.cache_read_tokens;
+        self.cache_write += ev.cache_write_tokens;
+        self.events += 1;
+        match cost {
+            Some(c) => self.cost += c,
+            None => self.unpriced += 1,
+        }
+    }
+}
+
+fn cmd_tokens(
+    settings: &Settings,
+    period: TokenPeriod,
+    by: Option<TokenGroup>,
+    since_arg: Option<String>,
+    cost: bool,
+) -> Result<()> {
+    let provider_ids: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
+    let scanned = tokens::scan_all(&provider_ids);
+    let store = tokens::TokenStore::open()?;
+    let since = match &since_arg {
+        Some(s) => Some(parse_since(s)?),
+        None => token_period_start(period),
+    };
+    let events = events_for_providers(&store, since, &provider_ids)?;
+
+    let group = by.unwrap_or(TokenGroup::Day);
+    let mut groups: std::collections::HashMap<String, TokenAgg> = std::collections::HashMap::new();
+    let mut totals = TokenAgg::default();
+    for ev in &events {
+        let price = if cost {
+            pricing::event_cost_usd_merged(ev, &settings.config.pricing)
+        } else {
+            None
+        };
+        let key = match group {
+            TokenGroup::Day => fmt_day_key(ev.ts_unix),
+            TokenGroup::Model => ev.model.clone().unwrap_or_else(|| "(unknown)".into()),
+            TokenGroup::Project => ev.project.clone().unwrap_or_else(|| "(none)".into()),
+            TokenGroup::Session => ev.session_id.clone().unwrap_or_else(|| "(none)".into()),
+        };
+        groups.entry(key).or_default().add(ev, price);
+        totals.add(ev, price);
+    }
+    let mut rows: Vec<(String, TokenAgg)> = groups.into_iter().collect();
+    match group {
+        TokenGroup::Day => rows.sort_by(|a, b| a.0.cmp(&b.0)),
+        _ => rows.sort_by(|a, b| b.1.total().cmp(&a.1.total()).then(a.0.cmp(&b.0))),
+    }
+
+    if settings.json {
+        let mut rows_json: Vec<serde_json::Value> = Vec::new();
+        for (key, agg) in &rows {
+            let mut row = serde_json::json!({
+                "key": key,
+                "input_tokens": agg.input,
+                "output_tokens": agg.output,
+                "cache_read_tokens": agg.cache_read,
+                "cache_write_tokens": agg.cache_write,
+                "total_tokens": agg.total(),
+                "events": agg.events,
+            });
+            if cost {
+                row["cost_usd"] = serde_json::json!(agg.cost);
+                row["unpriced_events"] = serde_json::json!(agg.unpriced);
+            }
+            rows_json.push(row);
+        }
+        let mut totals_json = serde_json::json!({
+            "input_tokens": totals.input,
+            "output_tokens": totals.output,
+            "cache_read_tokens": totals.cache_read,
+            "cache_write_tokens": totals.cache_write,
+            "total_tokens": totals.total(),
+            "events": totals.events,
+        });
+        if cost {
+            totals_json["cost_usd"] = serde_json::json!(totals.cost);
+            totals_json["unpriced_events"] = serde_json::json!(totals.unpriced);
+        }
+        let out = serde_json::json!({
+            "period": period.id(),
+            "since": since,
+            "group_by": group.id(),
+            "scan_new_events": scanned,
+            "rows": rows_json,
+            "totals": totals_json,
+        });
+        if settings.pretty {
+            serde_json::to_writer_pretty(io::stdout().lock(), &out)?;
+        } else {
+            serde_json::to_writer(io::stdout().lock(), &out)?;
+        }
+        println!();
+        return Ok(());
+    }
+
+    if !settings.quiet {
+        banner();
+        let since_label = since
+            .map(fmt_day_key)
+            .unwrap_or_else(|| "start".to_string());
+        let mut head = format!(
+            "tokens · {} · since {since_label} · by {}",
+            period.id(),
+            group.id()
+        );
+        if scanned > 0 {
+            head.push_str(&format!(" · +{scanned} scanned"));
+        }
+        print_info(&head);
+        println!();
+    }
+
+    if rows.is_empty() {
+        print_info("no token events yet — JSONL scanners land with the tokens-core PR");
+        println!();
+        return Ok(());
+    }
+
+    let dollar = |agg: &TokenAgg| -> String {
+        if !cost {
+            String::new()
+        } else if agg.events == agg.unpriced {
+            format!("{:>10}", "—")
+        } else {
+            format!("{:>10}", fmt_usd(agg.cost))
+        }
+    };
+    println!(
+        "  {:<28} {:>12} {:>12} {:>12} {:>14}{}",
+        group.id().with(WHITE),
+        "in".with(WHITE),
+        "out".with(WHITE),
+        "cache".with(WHITE),
+        "total".with(WHITE),
+        if cost { "         $" } else { "" }
+    );
+    for (key, agg) in &rows {
+        println!(
+            "  {:<28} {:>12} {:>12} {:>12} {:>14}{}",
+            truncate_key(key, 28).with(usagenometer::ui::GRAY),
+            fmt_int(agg.input).with(usagenometer::ui::GRAY),
+            fmt_int(agg.output).with(usagenometer::ui::GRAY),
+            fmt_int(agg.cache_read + agg.cache_write).with(usagenometer::ui::GRAY),
+            fmt_int(agg.total()),
+            dollar(agg)
+        );
+    }
+    println!(
+        "  {:<28} {:>12} {:>12} {:>12} {:>14}{}",
+        "total".with(WHITE),
+        fmt_int(totals.input).with(WHITE),
+        fmt_int(totals.output).with(WHITE),
+        fmt_int(totals.cache_read + totals.cache_write).with(WHITE),
+        fmt_int(totals.total()).with(WHITE),
+        dollar(&totals)
+    );
+    if cost && totals.unpriced > 0 {
+        print_info(&format!(
+            "{} event(s) have unknown-model pricing and are excluded from $",
+            totals.unpriced
+        ));
+    }
+    println!();
+    Ok(())
+}
+
+fn truncate_key(key: &str, max: usize) -> String {
+    if key.len() <= max {
+        return key.to_string();
+    }
+    format!("…{}", &key[key.len() - (max - 1)..])
 }
 
 fn cmd_history(

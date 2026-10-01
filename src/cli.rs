@@ -45,6 +45,64 @@ pub enum ShellArg {
     Powershell,
 }
 
+/// Window for `usg check --budget-usd` spend totals.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum BudgetPeriod {
+    Day,
+    Week,
+    Month,
+}
+
+impl BudgetPeriod {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
+}
+
+/// Window for `usg tokens` totals.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum TokenPeriod {
+    Today,
+    Week,
+    Month,
+    All,
+}
+
+impl TokenPeriod {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Today => "today",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::All => "all",
+        }
+    }
+}
+
+/// Grouping for `usg tokens --by`.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum TokenGroup {
+    Model,
+    Project,
+    Session,
+    Day,
+}
+
+impl TokenGroup {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Project => "project",
+            Self::Session => "session",
+            Self::Day => "day",
+        }
+    }
+}
+
 /// Known AI usage providers.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum ProviderArg {
@@ -261,6 +319,12 @@ pub enum Command {
         /// Fail when any meter remaining % is below this (0–100)
         #[arg(long = "fail-under", value_name = "PCT", default_value_t = 10.0)]
         fail_under: f64,
+        /// Fail (exit 2) when token spend in the period reaches USD
+        #[arg(long = "budget-usd", value_name = "USD")]
+        budget_usd: Option<f64>,
+        /// Budget window for --budget-usd: day | week | month
+        #[arg(long = "period", value_enum, value_name = "PERIOD")]
+        period: Option<BudgetPeriod>,
     },
 
     /// Diagnose auth paths / expiry (no secrets)
@@ -286,6 +350,23 @@ pub enum Command {
         /// Summarize current burn rate, exhaustion runway, and next reset
         #[arg(long)]
         runway: bool,
+    },
+
+    /// Token ledger totals (today/7d/30d) with optional USD cost
+    #[command(visible_alias = "tok")]
+    Tokens {
+        /// Window: today | week | month | all
+        #[arg(long, value_enum, value_name = "PERIOD", default_value = "today")]
+        period: TokenPeriod,
+        /// Group rows by model | project | session | day
+        #[arg(long, value_enum, value_name = "KEY")]
+        by: Option<TokenGroup>,
+        /// Only events since UNIX_TS or YYYY-MM-DD
+        #[arg(long, value_name = "TS")]
+        since: Option<String>,
+        /// Add a USD cost column and total line
+        #[arg(long)]
+        cost: bool,
     },
 
     /// Show config path / effective settings
@@ -347,8 +428,55 @@ mod tests {
     fn parses_check() {
         let cli = Cli::parse_from(["usg", "check", "--fail-under", "5"]);
         match cli.command {
-            Some(Command::Check { fail_under }) => assert_eq!(fail_under, 5.0),
+            Some(Command::Check { fail_under, .. }) => assert_eq!(fail_under, 5.0),
             _ => panic!("expected check"),
+        }
+    }
+
+    #[test]
+    fn parses_check_budget() {
+        let cli = Cli::parse_from([
+            "usg",
+            "check",
+            "--fail-under",
+            "5",
+            "--budget-usd",
+            "10",
+            "--period",
+            "week",
+        ]);
+        match cli.command {
+            Some(Command::Check {
+                budget_usd, period, ..
+            }) => {
+                assert_eq!(budget_usd, Some(10.0));
+                assert_eq!(period, Some(BudgetPeriod::Week));
+            }
+            _ => panic!("expected check"),
+        }
+    }
+
+    #[test]
+    fn parses_tokens_flags() {
+        let cli = Cli::parse_from([
+            "usg", "tokens", "--period", "month", "--by", "model", "--cost",
+        ]);
+        match cli.command {
+            Some(Command::Tokens {
+                period, by, cost, ..
+            }) => {
+                assert_eq!(period, TokenPeriod::Month);
+                assert_eq!(by, Some(TokenGroup::Model));
+                assert!(cost);
+            }
+            _ => panic!("expected tokens"),
+        }
+        let cli = Cli::parse_from(["usg", "tokens", "--since", "2026-09-01"]);
+        match cli.command {
+            Some(Command::Tokens { since, .. }) => {
+                assert_eq!(since.as_deref(), Some("2026-09-01"));
+            }
+            _ => panic!("expected tokens"),
         }
     }
 
