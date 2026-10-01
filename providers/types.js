@@ -213,6 +213,128 @@ export function meterFromUsedPercent({
     });
 }
 
+/**
+ * @typedef {object} TokenCounts
+ * @property {number} inputTokens
+ * @property {number} outputTokens
+ * @property {number} cacheReadTokens
+ * @property {number} cacheWriteTokens
+ */
+
+/**
+ * @typedef {object} TokenLedger
+ * @property {string} period e.g. 'today', 'week', 'month'
+ * @property {TokenCounts} totals
+ * @property {(TokenCounts & {provider: string})[]} byProvider
+ */
+
+const TOKEN_KEYS = {
+    inputTokens: ['input_tokens', 'inputTokens', 'input'],
+    outputTokens: ['output_tokens', 'outputTokens', 'output'],
+    cacheReadTokens: ['cache_read_tokens', 'cacheReadTokens', 'cache_read', 'cacheRead'],
+    cacheWriteTokens: ['cache_write_tokens', 'cacheWriteTokens', 'cache_write', 'cacheWrite'],
+};
+
+function firstNumber(raw, keys) {
+    for (const key of keys) {
+        const number = coerceNumber(raw?.[key]);
+        if (number !== null)
+            return number;
+    }
+    return null;
+}
+
+function normalizeTokenCounts(raw) {
+    if (!raw || typeof raw !== 'object')
+        return null;
+    const counts = {};
+    let seen = false;
+    for (const [field, keys] of Object.entries(TOKEN_KEYS)) {
+        const number = firstNumber(raw, keys);
+        if (number !== null)
+            seen = true;
+        counts[field] = number ?? 0;
+    }
+    return seen ? counts : null;
+}
+
+function isEmptyTokenCounts(counts) {
+    return !counts || (
+        counts.inputTokens === 0 &&
+        counts.outputTokens === 0 &&
+        counts.cacheReadTokens === 0 &&
+        counts.cacheWriteTokens === 0
+    );
+}
+
+/**
+ * Normalize `usg tokens --json` output into a TokenLedger.
+ * Tolerates `totals`/`total`, `by_provider`/`providers`/`byProvider`, and
+ * numeric-string counts. Returns null when nothing usable is present so the
+ * UI can hide the row instead of showing zeros.
+ * @param {object|object[]} raw
+ * @returns {TokenLedger|null}
+ */
+export function normalizeTokenLedger(raw) {
+    if (!raw || typeof raw !== 'object')
+        return null;
+
+    const providersRaw = Array.isArray(raw)
+        ? raw
+        : (raw.by_provider ?? raw.byProvider ?? raw.providers);
+
+    const byProvider = [];
+    if (Array.isArray(providersRaw)) {
+        for (const item of providersRaw) {
+            const provider = String(item?.provider ?? item?.id ?? item?.name ?? '').trim();
+            const counts = normalizeTokenCounts(item);
+            if (!provider || !counts || isEmptyTokenCounts(counts))
+                continue;
+            byProvider.push({provider, ...counts});
+        }
+    }
+    byProvider.sort((a, b) =>
+        (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens));
+
+    let totals = normalizeTokenCounts(Array.isArray(raw) ? null : (raw.totals ?? raw.total));
+    if ((!totals || isEmptyTokenCounts(totals)) && byProvider.length > 0) {
+        totals = {inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0};
+        for (const entry of byProvider) {
+            totals.inputTokens += entry.inputTokens;
+            totals.outputTokens += entry.outputTokens;
+            totals.cacheReadTokens += entry.cacheReadTokens;
+            totals.cacheWriteTokens += entry.cacheWriteTokens;
+        }
+    }
+    if (!totals || (isEmptyTokenCounts(totals) && byProvider.length === 0))
+        return null;
+
+    const period = typeof raw?.period === 'string' && raw.period.trim()
+        ? raw.period.trim()
+        : 'today';
+
+    return {period, totals, byProvider};
+}
+
+/**
+ * Human-readable token count with k/M/B suffixes: 340000 → '340k',
+ * 1200000 → '1.2M'.
+ * @param {number|string|null} value
+ * @returns {string}
+ */
+export function formatTokenCount(value) {
+    const number = coerceNumber(value) ?? 0;
+    const sign = number < 0 ? '-' : '';
+    const abs = Math.abs(number);
+    for (const [divisor, suffix] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
+        if (abs >= divisor) {
+            const text = (abs / divisor).toFixed(1).replace(/\.0$/, '');
+            return `${sign}${text}${suffix}`;
+        }
+    }
+    return `${sign}${Math.round(abs)}`;
+}
+
 export function coerceNumber(value) {
     if (typeof value === 'number' && Number.isFinite(value))
         return value;

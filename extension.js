@@ -21,6 +21,8 @@ import {
     PROVIDER_IDS,
     PROVIDER_LABELS,
     fetchAllProviders,
+    fetchTokens,
+    formatTokenCount,
     normalizeEnabledProviders,
 } from './providers/registry.js';
 
@@ -48,6 +50,7 @@ class UsagenometerIndicator extends PanelMenu.Button {
         this._refreshInFlight = null;
         this._state = {
             providers: [],
+            tokens: null,
             lastUpdated: null,
         };
 
@@ -103,6 +106,11 @@ class UsagenometerIndicator extends PanelMenu.Button {
             () => this._renderCurrentState(),
             this,
         );
+        this._settings.connectObject(
+            'changed::show-tokens',
+            () => void this.refresh(),
+            this,
+        );
 
         this._restartRefreshTimer();
         this._renderCurrentState();
@@ -112,6 +120,9 @@ class UsagenometerIndicator extends PanelMenu.Button {
     _buildMenu() {
         this._usageSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._usageSection);
+
+        this._tokensSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._tokensSection);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -161,15 +172,21 @@ class UsagenometerIndicator extends PanelMenu.Button {
     async _refreshUsage() {
         try {
             const enabled = this._getEnabledProviders();
-            const providers = await fetchAllProviders(enabled);
+            const showTokens = this._getShowTokens();
+            const [providers, tokens] = await Promise.all([
+                fetchAllProviders(enabled),
+                showTokens ? fetchTokens() : Promise.resolve(null),
+            ]);
             this._state = {
                 providers,
+                tokens,
                 lastUpdated: GLib.DateTime.new_now_local(),
             };
         } catch (error) {
             reportError(error, '[usagenometer] usage refresh failed');
             this._state = {
                 ...this._state,
+                tokens: null,
                 providers: this._state.providers.map(provider => ({
                     ...provider,
                     status: provider.status === 'ok' ? 'ok' : 'error',
@@ -187,6 +204,7 @@ class UsagenometerIndicator extends PanelMenu.Button {
         }));
         this._refreshTimestampLabel.text = formatLastUpdatedValue(this._state);
         this._renderUsage(this._state, displayMode);
+        this._renderTokens(this._state);
     }
 
     _renderUsage(state, displayMode) {
@@ -203,6 +221,12 @@ class UsagenometerIndicator extends PanelMenu.Button {
 
         for (const provider of providers)
             this._usageSection.addMenuItem(createProviderMenuItem(provider, displayMode));
+    }
+
+    _renderTokens(state) {
+        this._tokensSection.removeAll();
+        if (state.tokens)
+            this._tokensSection.addMenuItem(createTokensMenuItem(state.tokens));
     }
 
     _restartRefreshTimer() {
@@ -254,6 +278,14 @@ class UsagenometerIndicator extends PanelMenu.Button {
             return normalized.length > 0 ? normalized : [...DEFAULT_ENABLED_PROVIDERS];
         } catch (error) {
             return [...DEFAULT_ENABLED_PROVIDERS];
+        }
+    }
+
+    _getShowTokens() {
+        try {
+            return this._settings.get_boolean('show-tokens');
+        } catch (error) {
+            return true;
         }
     }
 
@@ -374,6 +406,72 @@ function createProviderMenuItem(provider, displayMode) {
 
     menuItem.add_child(content);
     return menuItem;
+}
+
+function createTokensMenuItem(tokens) {
+    const menuItem = new PopupMenu.PopupBaseMenuItem({
+        reactive: false,
+        can_focus: false,
+    });
+    const content = new St.BoxLayout({vertical: true, x_expand: true});
+    const header = new St.BoxLayout({x_expand: true});
+    header.add_child(new St.Label({
+        text: formatTokensTitle(tokens),
+        style: 'font-weight: 700;',
+        x_expand: true,
+        x_align: Clutter.ActorAlign.START,
+    }));
+    header.add_child(new St.Label({
+        text: formatTokensSummary(tokens),
+        style_class: 'dim-label',
+        x_align: Clutter.ActorAlign.END,
+    }));
+    content.add_child(header);
+
+    for (const entry of tokens.byProvider) {
+        content.add_child(new St.Label({
+            text: formatTokensProviderLine(entry),
+            style_class: 'dim-label',
+            x_align: Clutter.ActorAlign.START,
+        }));
+    }
+
+    menuItem.add_child(content);
+    return menuItem;
+}
+
+function formatTokensTitle(tokens) {
+    const period = String(tokens?.period ?? '').trim();
+    return period ? `${_('Tokens')} ${period}` : _('Tokens');
+}
+
+function formatTokensSummary(tokens) {
+    const totals = tokens?.totals ?? {};
+    const count = tokens?.byProvider?.length ?? 0;
+    const parts = [
+        `▸ ${formatTokenCount(totals.inputTokens)} ${_('in')}`,
+        `${formatTokenCount(totals.outputTokens)} ${_('out')}`,
+    ];
+    if (count > 0)
+        parts.push(`${count} ${count === 1 ? _('provider') : _('providers')}`);
+    return parts.join(' · ');
+}
+
+function formatTokensProviderLine(entry) {
+    const label = PROVIDER_LABELS[entry.provider] ?? titleCase(entry.provider);
+    const parts = [
+        `${formatTokenCount(entry.inputTokens)} ${_('in')}`,
+        `${formatTokenCount(entry.outputTokens)} ${_('out')}`,
+    ];
+    const cached = (entry.cacheReadTokens ?? 0) + (entry.cacheWriteTokens ?? 0);
+    if (cached > 0)
+        parts.push(`${formatTokenCount(cached)} ${_('cache')}`);
+    return `${label}: ${parts.join(' · ')}`;
+}
+
+function titleCase(text) {
+    const value = String(text ?? '');
+    return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function createCompactMeter(meter, displayMode) {

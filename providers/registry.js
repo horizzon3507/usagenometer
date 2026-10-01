@@ -8,10 +8,12 @@ import {
     PROVIDER_IDS,
     PROVIDER_LABELS,
     createSnapshot,
+    formatTokenCount,
 } from './types.js';
 import {
     discoverProviderDefs,
     fetchSnapshotsFromCli,
+    fetchTokens,
     resolveCliBinary,
     testProviderFromCli,
 } from './cliBackend.js';
@@ -22,6 +24,8 @@ export {
     PROVIDER_LABELS,
     resolveCliBinary,
     discoverProviderDefs,
+    fetchTokens,
+    formatTokenCount,
 };
 
 export function listProviderDefs() {
