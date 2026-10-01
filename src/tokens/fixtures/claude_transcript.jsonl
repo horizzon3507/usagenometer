@@ -1,0 +1,7 @@
+{"type":"summary","summary":"test transcript","leafUuid":"u0"}
+{"type":"user","uuid":"u1","sessionId":"sess-c1","timestamp":"2026-09-30T09:59:00.000Z","cwd":"/work/proj","message":{"role":"user","content":"hi"}}
+{"type":"assistant","uuid":"u2","sessionId":"sess-c1","timestamp":"2026-09-30T10:00:00.000Z","cwd":"/work/proj","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":12,"output_tokens":34,"cache_creation_input_tokens":56,"cache_read_input_tokens":78}}}
+not valid json at all
+{"type":"assistant","uuid":"u3","sessionId":"sess-c1","timestamp":"2026-09-30T10:01:00.000Z","cwd":"/work/proj","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":4,"output_tokens":9,"cache_read_input_tokens":20}}}
+{"type":"system","uuid":"u4","content":"compact boundary"}
+{"type":"assistant","uuid":"u5","timestamp":"2026-09-30T10:02:00.000Z","message":{"model":"claude-haiku"}}

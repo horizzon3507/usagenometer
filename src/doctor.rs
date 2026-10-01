@@ -90,7 +90,7 @@ impl StyleExt for str {
 }
 
 fn check_xdg() -> Vec<Check> {
-    vec![
+    let mut out = vec![
         Check {
             status: CheckStatus::Pass,
             name: "config path".into(),
@@ -106,7 +106,20 @@ fn check_xdg() -> Vec<Check> {
             name: "cache dir".into(),
             detail: paths::display_path(&paths::cache_dir()),
         },
-    ]
+    ];
+    out.push(match crate::tokens::TokenStore::open() {
+        Ok(store) => Check {
+            status: CheckStatus::Pass,
+            name: "token ledger".into(),
+            detail: format!("{} events", store.event_count().unwrap_or(0)),
+        },
+        Err(_) => Check {
+            status: CheckStatus::Warn,
+            name: "token ledger".into(),
+            detail: "token_events table unavailable".into(),
+        },
+    });
+    out
 }
 
 fn check_codex(privacy: bool) -> Vec<Check> {

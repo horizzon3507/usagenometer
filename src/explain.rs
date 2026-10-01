@@ -70,6 +70,7 @@ fn section(p: ProviderArg) -> String {
 const GENERAL: &str = "\
 Notes\n\
   · usagenometer only reads local auth and provider quota APIs — it never stores tokens and never calls AI models.\n\
+  · `usg tokens` builds a local token ledger from agent session logs (Claude Code, Codex CLI) — no network.\n\
   · Private APIs can change; per-provider errors are expected when auth expires or endpoints move.\n\
   · Use `usg doctor` to see which auth files exist and whether tokens look expired.\n\
 ";

@@ -35,6 +35,29 @@ pub enum OutputFormat {
     Prometheus,
 }
 
+/// Aggregation window for `usg tokens`.
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub enum TokenPeriod {
+    /// Since local midnight
+    Today,
+    /// Last 7 days (default)
+    #[default]
+    Week,
+    /// Last 30 days
+    Month,
+    /// All recorded events
+    All,
+}
+
+/// Grouping dimension for `usg tokens --by` (repeatable).
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum TokenGroupBy {
+    Model,
+    Project,
+    Session,
+    Day,
+}
+
 /// Shell for completions.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ShellArg {
@@ -108,6 +131,8 @@ Examples:\n\
   usg doctor\n\
   usg explain codex\n\
   usg history\n\
+  usg tokens\n\
+  usg tokens --by model --by day\n\
   usg tui\n\
   usg completions zsh\n\
   usg --help",
@@ -270,6 +295,19 @@ pub enum Command {
     Explain {
         #[arg(value_enum, value_name = "PROVIDER")]
         provider: Option<ProviderArg>,
+    },
+
+    /// Token ledger: scan local agent logs, report token usage
+    Tokens {
+        /// Aggregation window
+        #[arg(long, value_enum, default_value_t = TokenPeriod::Week)]
+        period: TokenPeriod,
+        /// Group rows by dimension (repeatable): model, project, session, day
+        #[arg(long = "by", value_enum, value_name = "DIM")]
+        by: Vec<TokenGroupBy>,
+        /// Only include events since (RFC3339 or YYYY-MM-DD)
+        #[arg(long, value_name = "WHEN")]
+        since: Option<String>,
     },
 
     /// Show recent local history snapshots

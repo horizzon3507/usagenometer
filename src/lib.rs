@@ -15,5 +15,6 @@ pub mod paths;
 pub mod privacy;
 pub mod providers;
 pub mod routing;
+pub mod tokens;
 pub mod tui;
 pub mod ui;

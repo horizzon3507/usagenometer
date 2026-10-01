@@ -14,7 +14,9 @@ use crossterm::terminal::{Clear, ClearType};
 use crossterm::{ExecutableCommand, cursor};
 
 use usagenometer::alerts::{self, AlertStateStore};
-use usagenometer::cli::{Cli, Command, OutputFormat, ProviderArg, ShellArg};
+use usagenometer::cli::{
+    Cli, Command, OutputFormat, ProviderArg, ShellArg, TokenGroupBy, TokenPeriod,
+};
 use usagenometer::config::{ConfigFile, Settings};
 use usagenometer::doctor;
 use usagenometer::eta;
@@ -25,6 +27,7 @@ use usagenometer::paths;
 use usagenometer::privacy;
 use usagenometer::providers::{self, resolve_providers};
 use usagenometer::routing;
+use usagenometer::tokens::{self, TokenStore};
 use usagenometer::ui::{
     StatusOptions, WHITE, banner, bin_name, flush_stdout, print_compact, print_diff, print_error,
     print_info, print_status_opts, print_success, print_warn,
@@ -85,6 +88,9 @@ fn run() -> Result<()> {
         }
         Some(Command::Explain { provider }) => {
             print!("{}", explain::explain(provider));
+        }
+        Some(Command::Tokens { period, by, since }) => {
+            cmd_tokens(&settings, period, &by, since.as_deref())?;
         }
         Some(Command::History {
             limit,
@@ -385,6 +391,9 @@ fn cmd_providers(quiet: bool, verbose: bool) {
             if c.local_history {
                 facts.push("history");
             }
+            if c.token_ledger {
+                facts.push("ledger");
+            }
             line.push_str(&format!("  ·  {}", facts.join(", ")));
         }
         println!("{}", line.with(WHITE));
@@ -506,6 +515,246 @@ fn cmd_history(
                 }
             }
         }
+    }
+    println!();
+    Ok(())
+}
+
+/// `usg tokens` — scan local agent logs (incremental) and report the ledger.
+fn cmd_tokens(
+    settings: &Settings,
+    period: TokenPeriod,
+    by: &[TokenGroupBy],
+    since: Option<&str>,
+) -> Result<()> {
+    let selected: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
+    let scan_ids: Vec<&str> = if selected.is_empty() {
+        vec!["claude", "codex", "grok", "gemini", "cursor"]
+    } else {
+        selected.clone()
+    };
+    let scanned = tokens::scan_all(&scan_ids);
+    let store = TokenStore::open()?;
+    let local = tokens::local_offset();
+
+    // Window: period lower bound, tightened by --since when present.
+    let now = tokens::now_unix();
+    let period_start = match period {
+        TokenPeriod::Today => Some(tokens::day_start_unix(now, local)),
+        TokenPeriod::Week => Some(now - 7.0 * 86400.0),
+        TokenPeriod::Month => Some(now - 30.0 * 86400.0),
+        TokenPeriod::All => None,
+    };
+    let since_unix = match since {
+        Some(s) => Some(tokens::parse_since(s).ok_or_else(|| {
+            anyhow::anyhow!("invalid --since '{s}' (want RFC3339 or YYYY-MM-DD)")
+        })?),
+        None => None,
+    };
+    let lower = [period_start, since_unix]
+        .into_iter()
+        .flatten()
+        .reduce(f64::max);
+
+    let mut events = store.events_since(lower, None)?;
+    if !selected.is_empty() {
+        let wanted: std::collections::HashSet<&str> = selected.iter().copied().collect();
+        events.retain(|e| wanted.contains(e.provider.as_str()));
+    }
+    if settings.privacy {
+        for e in &mut events {
+            if let Some(p) = e.project.as_mut() {
+                *p = privacy::redact_account(p);
+            }
+        }
+    }
+
+    if settings.json || matches!(settings.format, Some(OutputFormat::Json)) {
+        return emit_tokens_json(&events, scanned, period, by, settings.pretty);
+    }
+
+    if !settings.quiet {
+        banner();
+        print_info(&format!(
+            "token ledger · +{} new events · {}",
+            tokens::fmt_num(scanned as u64),
+            paths::display_path(store.path())
+        ));
+        println!();
+    }
+
+    if events.is_empty() {
+        print_info("no token events yet — scanned ~/.claude and ~/.codex local logs");
+        println!();
+        return Ok(());
+    }
+
+    if by.is_empty() && since.is_none() && period == TokenPeriod::Week {
+        print_tokens_overview(&events, local);
+    } else {
+        let groups: Vec<tokens::Group> = by.iter().map(|g| map_group(*g)).collect();
+        print_tokens_table(&events, &groups, by);
+    }
+    println!();
+    Ok(())
+}
+
+fn map_group(g: TokenGroupBy) -> tokens::Group {
+    match g {
+        TokenGroupBy::Model => tokens::Group::Model,
+        TokenGroupBy::Project => tokens::Group::Project,
+        TokenGroupBy::Session => tokens::Group::Session,
+        TokenGroupBy::Day => tokens::Group::Day,
+    }
+}
+
+fn print_tokens_overview(
+    events: &[usagenometer::tokens::TokenEvent],
+    local: time::UtcOffset,
+) {
+    use std::collections::BTreeMap;
+    use usagenometer::tokens::{Totals, day_start_unix, fmt_num, now_unix};
+
+    let now = now_unix();
+    let today = day_start_unix(now, local);
+    let windows: [(&str, f64); 3] = [
+        ("today", today),
+        ("7d", now - 7.0 * 86400.0),
+        ("30d", now - 30.0 * 86400.0),
+    ];
+    let mut providers: BTreeMap<String, Vec<usagenometer::tokens::TokenEvent>> = BTreeMap::new();
+    for e in events {
+        providers.entry(e.provider.clone()).or_default().push(e.clone());
+    }
+    let header = format!(
+        "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}",
+        "provider", "period", "input", "output", "cache-read", "cache-write", "total"
+    );
+    println!("{}", header.with(usagenometer::ui::DIM));
+    for (provider, evs) in &providers {
+        for (label, start) in windows {
+            let mut t = Totals::default();
+            for e in evs.iter().filter(|e| e.ts_unix >= start) {
+                t.input += e.input_tokens;
+                t.output += e.output_tokens;
+                t.cache_read += e.cache_read_tokens;
+                t.cache_write += e.cache_write_tokens;
+            }
+            println!(
+                "{}",
+                format!(
+                    "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}",
+                    provider,
+                    label,
+                    fmt_num(t.input),
+                    fmt_num(t.output),
+                    fmt_num(t.cache_read),
+                    fmt_num(t.cache_write),
+                    fmt_num(t.total())
+                )
+                .with(usagenometer::ui::GRAY)
+            );
+        }
+    }
+}
+
+fn print_tokens_table(
+    events: &[usagenometer::tokens::TokenEvent],
+    groups: &[tokens::Group],
+    by: &[TokenGroupBy],
+) {
+    use usagenometer::tokens::fmt_num;
+
+    let rows = tokens::aggregate(events, groups);
+    let dim_names: Vec<String> = by.iter().map(|g| group_name(*g).to_string()).collect();
+    let key_head = if dim_names.is_empty() {
+        String::new()
+    } else {
+        format!(" {:<24}", dim_names.join(" / "))
+    };
+    println!(
+        "{}",
+        format!(
+            "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}",
+            "provider", key_head, "input", "output", "cache-read", "cache-write", "total"
+        )
+        .with(usagenometer::ui::DIM)
+    );
+    for row in &rows {
+        let key_cell = if row.keys.is_empty() {
+            String::new()
+        } else {
+            format!(" {:<24}", truncate_key(&row.keys.join(" / "), 24))
+        };
+        println!(
+            "{}",
+            format!(
+                "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}",
+                row.provider,
+                key_cell,
+                fmt_num(row.totals.input),
+                fmt_num(row.totals.output),
+                fmt_num(row.totals.cache_read),
+                fmt_num(row.totals.cache_write),
+                fmt_num(row.totals.total())
+            )
+            .with(usagenometer::ui::GRAY)
+        );
+    }
+}
+
+fn group_name(g: TokenGroupBy) -> &'static str {
+    match g {
+        TokenGroupBy::Model => "model",
+        TokenGroupBy::Project => "project",
+        TokenGroupBy::Session => "session",
+        TokenGroupBy::Day => "day",
+    }
+}
+
+fn truncate_key(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn emit_tokens_json(
+    events: &[usagenometer::tokens::TokenEvent],
+    scanned: usize,
+    period: TokenPeriod,
+    by: &[TokenGroupBy],
+    pretty: bool,
+) -> Result<()> {
+    let groups: Vec<tokens::Group> = by.iter().map(|g| map_group(*g)).collect();
+    let rows = tokens::aggregate(events, &groups);
+    let dim_names: Vec<String> = by.iter().map(|g| group_name(*g).to_string()).collect();
+    let mut out_rows = Vec::new();
+    for row in &rows {
+        let mut obj = serde_json::json!({
+            "provider": row.provider,
+            "input_tokens": row.totals.input,
+            "output_tokens": row.totals.output,
+            "cache_read_tokens": row.totals.cache_read,
+            "cache_write_tokens": row.totals.cache_write,
+            "total_tokens": row.totals.total(),
+        });
+        for (name, value) in dim_names.iter().zip(row.keys.iter()) {
+            obj[name] = serde_json::Value::String(value.clone());
+        }
+        out_rows.push(obj);
+    }
+    let doc = serde_json::json!({
+        "scanned_new_events": scanned,
+        "period": format!("{period:?}").to_lowercase(),
+        "groups": out_rows,
+    });
+    if pretty {
+        serde_json::to_writer_pretty(io::stdout().lock(), &doc)?;
+    } else {
+        serde_json::to_writer(io::stdout().lock(), &doc)?;
     }
     println!();
     Ok(())

@@ -58,6 +58,9 @@ usg doctor                  # auth paths / expiry (no secrets)
 usg explain [provider]
 usg history --runway          # local burn rate + exhaustion estimate + reset
 usg history --spark
+usg tokens                    # token ledger: today/7d/30d per provider
+usg tokens --by model --by day --period month
+usg tokens --since 2026-09-01 -p claude --json
 usg config --dump
 usg tui                     # interactive live view
 usg json --pretty
@@ -94,6 +97,7 @@ usg --help
 | `doctor` | Diagnose auth files, token expiry, Antigravity OAuth env |
 | `explain` | Inline docs for plan/meter meanings |
 | `history` | Local SQLite snapshots (`--runway` for burn/ETA/reset; `--spark` for sparklines) |
+| `tokens` | Local token ledger — scans agent session logs (`--period today\|week\|month\|all`, `--by model\|project\|session\|day`, `--since`, `--json`) |
 | `config` | Show XDG paths; `--dump` effective TOML |
 | `tui` | Interactive TUI (`q` quit, `r` refresh, `j`/`k` select) |
 | `completions` | Generate bash/zsh/fish/… completions to stdout |
@@ -125,7 +129,7 @@ Data / cache:
 
 | Path | Use |
 |------|-----|
-| `~/.local/share/usagenometer/history.sqlite3` | Snapshot history |
+| `~/.local/share/usagenometer/history.sqlite3` | Snapshot history + token ledger |
 | `~/.cache/usagenometer/snapshots/` | Short cache for stale fallback |
 
 ### Statuslines
@@ -209,7 +213,7 @@ packaging/systemd/    # user timer examples for alerts
 
 ## Notes
 
-- Tokens are never written by usagenometer.
+- Tokens are never written by usagenometer. `usg tokens` reads agent session logs (`~/.claude/projects`, `~/.codex/sessions`) into a local ledger — contents stay on disk, no network calls.
 - `cache_ttl` serves a fresh local snapshot before a network request; when a live request fails after that TTL, a recent last-good snapshot may show as `(stale Xm)`.
 - Alert notifications are edge-triggered and persisted under the XDG cache, so a systemd timer notifies on threshold crossing and once when the meter recovers.
 - Cursor and Antigravity private APIs can change; failures stay per-provider.

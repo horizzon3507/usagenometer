@@ -21,27 +21,39 @@ pub struct ProviderCapabilities {
     pub money_balance: bool,
     pub reset_windows: bool,
     pub local_history: bool,
+    /// Local session files can feed the `usg tokens` token ledger.
+    pub token_ledger: bool,
 }
 
 pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
     match id {
-        "codex" | "cursor" | "antigravity" | "claude" => ProviderCapabilities {
+        "codex" | "claude" => ProviderCapabilities {
             real_quota: true,
             money_balance: false,
             reset_windows: true,
             local_history: true,
+            token_ledger: true,
+        },
+        "cursor" | "antigravity" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: false,
+            reset_windows: true,
+            local_history: true,
+            token_ledger: false,
         },
         "grok" => ProviderCapabilities {
             real_quota: true,
             money_balance: true,
             reset_windows: true,
             local_history: true,
+            token_ledger: false,
         },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
             reset_windows: false,
             local_history: false,
+            token_ledger: false,
         },
     }
 }
