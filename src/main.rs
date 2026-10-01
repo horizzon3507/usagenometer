@@ -12,10 +12,11 @@ use clap_complete::{Shell, generate};
 use crossterm::style::Stylize;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{ExecutableCommand, cursor};
+use time::{Duration as TimeDuration, OffsetDateTime, Time};
 
 use usagenometer::alerts::{self, AlertStateStore};
 use usagenometer::cli::{
-    Cli, Command, OutputFormat, ProviderArg, ShellArg, TokenGroupBy, TokenPeriod,
+    BudgetPeriod, Cli, Command, OutputFormat, ProviderArg, ShellArg, TokenGroupBy, TokenPeriod,
 };
 use usagenometer::config::{ConfigFile, Settings};
 use usagenometer::doctor;
@@ -24,10 +25,11 @@ use usagenometer::explain;
 use usagenometer::export;
 use usagenometer::history::{self, HistoryStore};
 use usagenometer::paths;
+use usagenometer::pricing;
 use usagenometer::privacy;
 use usagenometer::providers::{self, resolve_providers};
 use usagenometer::routing;
-use usagenometer::tokens::{self, TokenStore};
+use usagenometer::tokens::{self, TokenEvent, TokenStore};
 use usagenometer::ui::{
     StatusOptions, WHITE, banner, bin_name, flush_stdout, print_compact, print_diff, print_error,
     print_info, print_status_opts, print_success, print_warn,
@@ -76,8 +78,12 @@ fn run() -> Result<()> {
         Some(Command::Json) => {
             cmd_json(&settings)?;
         }
-        Some(Command::Check { fail_under }) => {
-            cmd_check(&settings, fail_under)?;
+        Some(Command::Check {
+            fail_under,
+            budget_usd,
+            period,
+        }) => {
+            cmd_check(&settings, fail_under, budget_usd, period)?;
         }
         Some(Command::Doctor) => {
             let checks = doctor::run(settings.privacy);
@@ -89,8 +95,13 @@ fn run() -> Result<()> {
         Some(Command::Explain { provider }) => {
             print!("{}", explain::explain(provider));
         }
-        Some(Command::Tokens { period, by, since }) => {
-            cmd_tokens(&settings, period, &by, since.as_deref())?;
+        Some(Command::Tokens {
+            period,
+            by,
+            since,
+            cost,
+        }) => {
+            cmd_tokens(&settings, period, &by, since.as_deref(), cost)?;
         }
         Some(Command::History {
             limit,
@@ -406,7 +417,12 @@ fn cmd_json(settings: &Settings) -> Result<()> {
     emit_json(&snaps, settings.pretty)
 }
 
-fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
+fn cmd_check(
+    settings: &Settings,
+    fail_under: f64,
+    budget_usd: Option<f64>,
+    period: Option<BudgetPeriod>,
+) -> Result<()> {
     let snaps = fetch(settings);
     if settings.json {
         emit_json(&snaps, settings.pretty)?;
@@ -425,7 +441,40 @@ fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
             },
         );
     }
-    let (ok, messages) = export::check_fail_under(&snaps, fail_under);
+    let (mut ok, mut messages) = export::check_fail_under(&snaps, fail_under);
+
+    // Token budget gate: CLI flag wins over config.toml `budget_usd`/`budget_period`.
+    if let Some(budget) = budget_usd.or_else(|| settings.config.budget()) {
+        let window = period
+            .map(|p| p.id().to_string())
+            .or_else(|| settings.config.budget_window())
+            .unwrap_or_else(|| "day".to_string());
+        let provider_ids: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
+        let scanned = tokens::scan_all(&provider_ids);
+        let store = tokens::TokenStore::open()?;
+        let events =
+            events_for_providers(&store, Some(budget_window_start(&window)), &provider_ids)?;
+        let (total, unpriced) = pricing::total_cost_usd(&events, &settings.config.pricing);
+        if !settings.quiet && !settings.json {
+            let mut line = format!(
+                "tokens {window} · ${total:.4} / ${budget:.2} budget · {} events",
+                events.len()
+            );
+            if unpriced > 0 {
+                line.push_str(&format!(" · {unpriced} unpriced"));
+            }
+            if scanned > 0 {
+                line.push_str(&format!(" · +{scanned} scanned"));
+            }
+            print_info(&line);
+        }
+        let (budget_ok, budget_msgs) = export::check_budget_usd(total, budget, &window);
+        if !budget_ok {
+            ok = false;
+            messages.extend(budget_msgs);
+        }
+    }
+
     if !ok {
         for m in &messages {
             print_error(m);
@@ -436,6 +485,62 @@ fn cmd_check(settings: &Settings, fail_under: f64) -> Result<()> {
         print_success(&format!("all meters above {fail_under:.0}% remaining"));
     }
     Ok(())
+}
+
+/// Events since `since_unix`, filtered to `provider_ids` (empty = all).
+fn events_for_providers(
+    store: &tokens::TokenStore,
+    since_unix: Option<f64>,
+    provider_ids: &[&str],
+) -> Result<Vec<TokenEvent>> {
+    let events = store.events_since(since_unix, None)?;
+    if provider_ids.is_empty() {
+        return Ok(events);
+    }
+    Ok(events
+        .into_iter()
+        .filter(|ev| provider_ids.contains(&ev.provider.as_str()))
+        .collect())
+}
+
+/// UTC start of the current day / week (Mon) / month, as unix seconds.
+fn budget_window_start(window: &str) -> f64 {
+    match window {
+        "week" => week_start_unix(),
+        "month" => month_start_unix(),
+        _ => day_start_unix(),
+    }
+}
+
+fn day_start_unix() -> f64 {
+    OffsetDateTime::now_utc()
+        .date()
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn week_start_unix() -> f64 {
+    let now = OffsetDateTime::now_utc();
+    let days_back = i64::from(now.weekday().number_from_monday()) - 1;
+    (now.date() - TimeDuration::days(days_back))
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn month_start_unix() -> f64 {
+    let now = OffsetDateTime::now_utc();
+    now.date()
+        .replace_day(1)
+        .unwrap_or_else(|_| now.date())
+        .with_time(Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp() as f64
+}
+
+fn fmt_usd(usd: f64) -> String {
+    format!("${usd:.4}")
 }
 
 fn cmd_history(
@@ -526,6 +631,7 @@ fn cmd_tokens(
     period: TokenPeriod,
     by: &[TokenGroupBy],
     since: Option<&str>,
+    cost: bool,
 ) -> Result<()> {
     let selected: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
     let scan_ids: Vec<&str> = if selected.is_empty() {
@@ -570,7 +676,7 @@ fn cmd_tokens(
     }
 
     if settings.json || matches!(settings.format, Some(OutputFormat::Json)) {
-        return emit_tokens_json(&events, scanned, period, by, settings.pretty);
+        return emit_tokens_json(&events, scanned, period, by, settings.pretty, cost, settings);
     }
 
     if !settings.quiet {
@@ -590,13 +696,63 @@ fn cmd_tokens(
     }
 
     if by.is_empty() && since.is_none() && period == TokenPeriod::Week {
-        print_tokens_overview(&events, local);
+        print_tokens_overview(&events, local, cost, settings);
     } else {
         let groups: Vec<tokens::Group> = by.iter().map(|g| map_group(*g)).collect();
-        print_tokens_table(&events, &groups, by);
+        print_tokens_table(&events, &groups, by, cost, settings);
+    }
+    if cost {
+        let (total_cost, unpriced) = pricing::total_cost_usd(&events, &settings.config.pricing);
+        print_info(&format!(
+            "cost {} · {}{}",
+            period.id(),
+            fmt_usd(total_cost),
+            if unpriced > 0 {
+                format!(" · {unpriced} event(s) unpriced")
+            } else {
+                String::new()
+            }
+        ));
     }
     println!();
     Ok(())
+}
+
+/// Group keys for an event, mirroring `tokens::aggregate` (for per-row cost).
+fn ev_group_keys(
+    ev: &TokenEvent,
+    groups: &[tokens::Group],
+    local: time::UtcOffset,
+) -> Vec<String> {
+    groups
+        .iter()
+        .map(|g| match g {
+            tokens::Group::Model => ev.model.clone().unwrap_or_else(|| "?".into()),
+            tokens::Group::Project => ev.project.clone().unwrap_or_else(|| "?".into()),
+            tokens::Group::Session => ev.session_id.clone().unwrap_or_else(|| "?".into()),
+            tokens::Group::Day => tokens::day_key(ev.ts_unix, local),
+        })
+        .collect()
+}
+
+/// (provider, group keys) -> (usd, unpriced events) for a `--cost` column.
+fn cost_by_group(
+    events: &[TokenEvent],
+    groups: &[tokens::Group],
+    settings: &Settings,
+) -> std::collections::HashMap<(String, Vec<String>), (f64, usize)> {
+    let local = tokens::local_offset();
+    let mut map: std::collections::HashMap<(String, Vec<String>), (f64, usize)> =
+        std::collections::HashMap::new();
+    for ev in events {
+        let key = (ev.provider.clone(), ev_group_keys(ev, groups, local));
+        let entry = map.entry(key).or_default();
+        match pricing::event_cost_usd_merged(ev, &settings.config.pricing) {
+            Some(c) => entry.0 += c,
+            None => entry.1 += 1,
+        }
+    }
+    map
 }
 
 fn map_group(g: TokenGroupBy) -> tokens::Group {
@@ -611,6 +767,8 @@ fn map_group(g: TokenGroupBy) -> tokens::Group {
 fn print_tokens_overview(
     events: &[usagenometer::tokens::TokenEvent],
     local: time::UtcOffset,
+    cost: bool,
+    settings: &Settings,
 ) {
     use std::collections::BTreeMap;
     use usagenometer::tokens::{Totals, day_start_unix, fmt_num, now_unix};
@@ -627,30 +785,47 @@ fn print_tokens_overview(
         providers.entry(e.provider.clone()).or_default().push(e.clone());
     }
     let header = format!(
-        "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}",
-        "provider", "period", "input", "output", "cache-read", "cache-write", "total"
+        "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}{}",
+        "provider", "period", "input", "output", "cache-read", "cache-write", "total",
+        if cost { "         $" } else { "" },
     );
     println!("{}", header.with(usagenometer::ui::DIM));
     for (provider, evs) in &providers {
         for (label, start) in windows {
+            let filtered: Vec<&usagenometer::tokens::TokenEvent> =
+                evs.iter().filter(|e| e.ts_unix >= start).collect();
             let mut t = Totals::default();
-            for e in evs.iter().filter(|e| e.ts_unix >= start) {
+            for e in &filtered {
                 t.input += e.input_tokens;
                 t.output += e.output_tokens;
                 t.cache_read += e.cache_read_tokens;
                 t.cache_write += e.cache_write_tokens;
             }
+            let cost_cell = if cost {
+                let window_events: Vec<TokenEvent> =
+                    filtered.iter().map(|e| (*e).clone()).collect();
+                let (usd, unpriced) =
+                    pricing::total_cost_usd(&window_events, &settings.config.pricing);
+                if unpriced == window_events.len() {
+                    format!(" {:>10}", "—")
+                } else {
+                    format!(" {:>10}", fmt_usd(usd))
+                }
+            } else {
+                String::new()
+            };
             println!(
                 "{}",
                 format!(
-                    "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}",
+                    "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}{}",
                     provider,
                     label,
                     fmt_num(t.input),
                     fmt_num(t.output),
                     fmt_num(t.cache_read),
                     fmt_num(t.cache_write),
-                    fmt_num(t.total())
+                    fmt_num(t.total()),
+                    cost_cell
                 )
                 .with(usagenometer::ui::GRAY)
             );
@@ -662,10 +837,17 @@ fn print_tokens_table(
     events: &[usagenometer::tokens::TokenEvent],
     groups: &[tokens::Group],
     by: &[TokenGroupBy],
+    cost: bool,
+    settings: &Settings,
 ) {
     use usagenometer::tokens::fmt_num;
 
     let rows = tokens::aggregate(events, groups);
+    let costs = if cost {
+        cost_by_group(events, groups, settings)
+    } else {
+        std::collections::HashMap::new()
+    };
     let dim_names: Vec<String> = by.iter().map(|g| group_name(*g).to_string()).collect();
     let key_head = if dim_names.is_empty() {
         String::new()
@@ -675,8 +857,15 @@ fn print_tokens_table(
     println!(
         "{}",
         format!(
-            "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}",
-            "provider", key_head, "input", "output", "cache-read", "cache-write", "total"
+            "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}{}",
+            "provider",
+            key_head,
+            "input",
+            "output",
+            "cache-read",
+            "cache-write",
+            "total",
+            if cost { "         $" } else { "" }
         )
         .with(usagenometer::ui::DIM)
     );
@@ -686,17 +875,31 @@ fn print_tokens_table(
         } else {
             format!(" {:<24}", truncate_key(&row.keys.join(" / "), 24))
         };
+        let cost_cell = if cost {
+            let (usd, unpriced) = costs
+                .get(&(row.provider.clone(), row.keys.clone()))
+                .copied()
+                .unwrap_or_default();
+            if unpriced > 0 && usd == 0.0 {
+                format!(" {:>10}", "—")
+            } else {
+                format!(" {:>10}", fmt_usd(usd))
+            }
+        } else {
+            String::new()
+        };
         println!(
             "{}",
             format!(
-                "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}",
+                "  {:<12}{} {:>12} {:>12} {:>12} {:>12} {:>14}{}",
                 row.provider,
                 key_cell,
                 fmt_num(row.totals.input),
                 fmt_num(row.totals.output),
                 fmt_num(row.totals.cache_read),
                 fmt_num(row.totals.cache_write),
-                fmt_num(row.totals.total())
+                fmt_num(row.totals.total()),
+                cost_cell
             )
             .with(usagenometer::ui::GRAY)
         );
@@ -727,9 +930,16 @@ fn emit_tokens_json(
     period: TokenPeriod,
     by: &[TokenGroupBy],
     pretty: bool,
+    cost: bool,
+    settings: &Settings,
 ) -> Result<()> {
     let groups: Vec<tokens::Group> = by.iter().map(|g| map_group(*g)).collect();
     let rows = tokens::aggregate(events, &groups);
+    let costs = if cost {
+        cost_by_group(events, &groups, settings)
+    } else {
+        std::collections::HashMap::new()
+    };
     let dim_names: Vec<String> = by.iter().map(|g| group_name(*g).to_string()).collect();
     let mut out_rows = Vec::new();
     for row in &rows {
@@ -741,15 +951,33 @@ fn emit_tokens_json(
             "cache_write_tokens": row.totals.cache_write,
             "total_tokens": row.totals.total(),
         });
+        if cost {
+            let (usd, unpriced) = costs
+                .get(&(row.provider.clone(), row.keys.clone()))
+                .copied()
+                .unwrap_or_default();
+            obj["cost_usd"] = serde_json::json!(usd);
+            obj["unpriced_events"] = serde_json::json!(unpriced);
+        }
         for (name, value) in dim_names.iter().zip(row.keys.iter()) {
             obj[name] = serde_json::Value::String(value.clone());
         }
         out_rows.push(obj);
     }
+    let (total_cost, unpriced) = if cost {
+        pricing::total_cost_usd(events, &settings.config.pricing)
+    } else {
+        (0.0, 0)
+    };
     let doc = serde_json::json!({
         "scanned_new_events": scanned,
         "period": format!("{period:?}").to_lowercase(),
         "groups": out_rows,
+        "totals": if cost {
+            serde_json::json!({"cost_usd": total_cost, "unpriced_events": unpriced})
+        } else {
+            serde_json::Value::Null
+        },
     });
     if pretty {
         serde_json::to_writer_pretty(io::stdout().lock(), &doc)?;

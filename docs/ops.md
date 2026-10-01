@@ -29,6 +29,18 @@ Exit `2` when any meter’s **remaining** % is below the threshold:
 
 Combine with filters: `usg check --fail-under 10 -p codex -p cursor`.
 
+### Spend budget gate
+
+`usg check --budget-usd N --period day|week|month` also exits `2` when the
+token ledger's spend in that UTC window reaches `N`. Both gates run (either can
+fail). Windows: calendar day, ISO week (Mon), calendar month. Defaults can come
+from `budget_usd` / `budget_period` in `config.toml`; CLI flags win.
+
+```bash
+usg check --fail-under 10 --budget-usd 5 --period week
+usg tokens --period week --by model --cost   # inspect the spend it gates on
+```
+
 ## Prometheus
 
 ```bash

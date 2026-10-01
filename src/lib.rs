@@ -12,6 +12,7 @@ pub mod history;
 pub mod http;
 pub mod jwt;
 pub mod paths;
+pub mod pricing;
 pub mod privacy;
 pub mod providers;
 pub mod routing;
