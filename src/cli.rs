@@ -118,6 +118,7 @@ pub enum ProviderArg {
     Grok,
     Glm,
     Kimi,
+    DevinCloud,
 }
 
 impl ProviderArg {
@@ -130,6 +131,7 @@ impl ProviderArg {
             Self::Grok => "grok",
             Self::Glm => "glm",
             Self::Kimi => "kimi",
+            Self::DevinCloud => "devin-cloud",
         }
     }
 
@@ -142,6 +144,7 @@ impl ProviderArg {
             Self::Grok,
             Self::Glm,
             Self::Kimi,
+            Self::DevinCloud,
         ]
     }
 }

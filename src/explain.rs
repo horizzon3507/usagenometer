@@ -83,6 +83,15 @@ fn section(p: ProviderArg) -> String {
              Token refresh reuses the CLI's own OAuth client and is persisted back.\n\
              Run kimi login if auth is missing.\n"
         ),
+        ProviderArg::DevinCloud => format!(
+            "Devin Cloud\n\
+             Source: DEVIN_API_KEY or devin auth login (~/.local/share/devin/credentials.toml) → api.devin.ai\n\
+             Meters:\n\
+               · ACU today / 7d — compute units consumed in the current billing day and trailing week.\n\
+               · Cycle ACU — ~30 days vs the org's monthly cap, when one is configured.\n\
+             Devin bills in ACUs, not tokens — no token ledger for this provider.\n\
+             Set DEVIN_ORG_ID to skip org discovery on non-Enterprise plans.\n"
+        ),
     }
 }
 

@@ -214,7 +214,7 @@ fn print_meter(meter: &UsageMeter, display: DisplayMode, color: bool, eta: Optio
                 .unwrap_or_else(|| "∞".into());
             format!("  {used}/{limit}")
         }
-        "credits" | "tokens" | "requests" => {
+        "credits" | "tokens" | "requests" | "acu" => {
             if fraction.is_none() {
                 match (meter.used, meter.limit) {
                     (Some(u), Some(l)) => format!("  {u:.0}/{l:.0}"),

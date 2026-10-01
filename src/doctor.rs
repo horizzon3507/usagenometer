@@ -30,6 +30,7 @@ pub fn run(privacy: bool) -> Vec<Check> {
     checks.extend(check_cursor(privacy));
     checks.extend(check_claude());
     checks.extend(check_grok(privacy));
+    checks.extend(check_devin_cloud());
     checks.extend(check_antigravity());
     checks.extend(check_xdg());
     checks.extend(check_token_ledger());
@@ -359,6 +360,37 @@ fn check_grok(privacy: bool) -> Vec<Check> {
                 detail: shown,
             });
         }
+    }
+    out
+}
+
+fn check_devin_cloud() -> Vec<Check> {
+    let mut out = Vec::new();
+    let env_key = std::env::var("DEVIN_API_KEY")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let path = crate::providers::devin_cloud::credentials_path();
+    if env_key.is_some() {
+        out.push(Check {
+            status: CheckStatus::Pass,
+            name: "devin api key".into(),
+            detail: "DEVIN_API_KEY set".into(),
+        });
+    } else if path.exists() {
+        out.push(Check {
+            status: CheckStatus::Pass,
+            name: "devin credentials".into(),
+            detail: paths::display_path(&path),
+        });
+    } else {
+        out.push(Check {
+            status: CheckStatus::Warn,
+            name: "devin api key".into(),
+            detail: format!(
+                "DEVIN_API_KEY unset and no {} — run devin auth login",
+                paths::display_path(&path)
+            ),
+        });
     }
     out
 }
