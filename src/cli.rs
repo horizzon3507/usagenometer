@@ -116,6 +116,7 @@ pub enum ProviderArg {
     Antigravity,
     Claude,
     Grok,
+    Glm,
 }
 
 impl ProviderArg {
@@ -126,6 +127,7 @@ impl ProviderArg {
             Self::Antigravity => "antigravity",
             Self::Claude => "claude",
             Self::Grok => "grok",
+            Self::Glm => "glm",
         }
     }
 
@@ -136,6 +138,7 @@ impl ProviderArg {
             Self::Antigravity,
             Self::Claude,
             Self::Grok,
+            Self::Glm,
         ]
     }
 }

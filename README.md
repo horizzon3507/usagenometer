@@ -176,6 +176,7 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 | **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools | `~/.antigravity` + `~/.gemini` sessions |
 | **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) | — |
 | **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly | `~/.grok` sessions + logs |
+| **GLM** | `ZAI_API_KEY` or `env.ANTHROPIC_AUTH_TOKEN` (z.ai `ANTHROPIC_BASE_URL`) → z.ai quota API | 5h / weekly / monthly MCP | `~/.claude/projects` GLM-model records |
 
 The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 

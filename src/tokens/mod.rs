@@ -342,6 +342,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
             "gemini" => collect::gemini::scan(),
             "cursor" => collect::cursor::scan(),
             "antigravity" => collect::antigravity::scan(),
+            "glm" => collect::glm::scan(),
             _ => Vec::new(),
         };
         events.append(&mut batch);

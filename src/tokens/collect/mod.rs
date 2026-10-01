@@ -7,6 +7,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
+pub mod glm;
 pub mod grok;
 mod util;
 
@@ -17,7 +18,15 @@ use crate::tokens::{TokenEvent, TokenStore};
 
 /// Every provider id with a local scanner, in stable order.
 pub fn known_providers() -> &'static [&'static str] {
-    &["claude", "codex", "grok", "gemini", "antigravity", "cursor"]
+    &[
+        "claude",
+        "codex",
+        "grok",
+        "gemini",
+        "antigravity",
+        "cursor",
+        "glm",
+    ]
 }
 
 /// Parse the provider's local files into events (no persistence).
@@ -30,6 +39,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "gemini" => gemini::scan(),
         "antigravity" => antigravity::scan(),
         "cursor" => cursor::scan(),
+        "glm" => glm::scan(),
         _ => Vec::new(),
     }
 }
@@ -43,6 +53,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "gemini" => gemini::scan_roots(),
         "antigravity" => antigravity::scan_roots(),
         "cursor" => cursor::scan_roots(),
+        "glm" => glm::scan_roots(),
         _ => Vec::new(),
     }
 }

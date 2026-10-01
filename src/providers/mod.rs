@@ -4,6 +4,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod glm;
 pub mod grok;
 pub mod types;
 
@@ -50,6 +51,13 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        "glm" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: false,
+            reset_windows: true,
+            local_history: true,
+            token_ledger: true,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -67,6 +75,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "antigravity" => "Antigravity",
         "claude" => "Claude",
         "grok" => "Grok",
+        "glm" => "GLM",
         _ => "Unknown",
     }
 }
@@ -174,6 +183,10 @@ pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
         },
         "grok" => match client {
             Some(c) => grok::fetch(c),
+            None => http_unavailable(id),
+        },
+        "glm" => match client {
+            Some(c) => glm::fetch(c),
             None => http_unavailable(id),
         },
         _ => ProviderSnapshot::fail(

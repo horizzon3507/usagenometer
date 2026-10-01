@@ -1,0 +1,8 @@
+{"type":"summary","summary":"glm session","leafUuid":"u0"}
+{"type":"user","uuid":"u1","sessionId":"sess-g1","timestamp":"2026-09-30T09:59:00.000Z","cwd":"/work/proj","message":{"role":"user","content":"hi"}}
+{"type":"assistant","uuid":"u2","sessionId":"sess-g1","timestamp":"2026-09-30T10:00:00.000Z","cwd":"/work/proj","message":{"model":"glm-4.6","usage":{"input_tokens":120,"output_tokens":40,"cache_creation_input_tokens":8,"cache_read_input_tokens":60}}}
+{"type":"assistant","uuid":"u3","sessionId":"sess-g1","timestamp":"2026-09-30T10:01:00.000Z","cwd":"/work/proj","message":{"model":"glm-4.5-air","usage":{"input_tokens":30,"output_tokens":12,"cache_read_input_tokens":18}}}
+{"type":"assistant","uuid":"u4","sessionId":"sess-c1","timestamp":"2026-09-30T10:02:00.000Z","cwd":"/work/proj","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":10,"output_tokens":5}}}
+not valid json at all
+{"type":"system","uuid":"u5","content":"compact boundary"}
+{"type":"assistant","uuid":"u6","timestamp":"2026-09-30T10:03:00.000Z","message":{"model":"glm-4.6"}}

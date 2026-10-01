@@ -64,6 +64,16 @@ fn section(p: ProviderArg) -> String {
                · Monthly — fallback monthly allowance when present.\n\
              Run grok login if auth is missing.\n"
         ),
+        ProviderArg::Glm => format!(
+            "GLM\n\
+             Source: ZAI_API_KEY or ~/.claude/settings.json env.ANTHROPIC_AUTH_TOKEN\n\
+             (used only when ANTHROPIC_BASE_URL is a z.ai host) → z.ai quota API\n\
+             Meters:\n\
+               · 5h / weekly — GLM Coding Plan usage windows.\n\
+               · Monthly · MCP — monthly tool budget when the plan returns it.\n\
+             Token ledger: GLM-plan Claude Code sessions under ~/.claude/projects\n\
+             are counted as provider glm (the claude scanner skips them).\n"
+        ),
     }
 }
 
