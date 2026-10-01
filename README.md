@@ -77,7 +77,7 @@ usg --help
 
 | Flag | Meaning |
 |------|---------|
-| `-p` / `--provider` | Limit to provider(s); repeatable (`codex` `cursor` `antigravity` `claude` `grok`) |
+| `-p` / `--provider` | Limit to provider(s); repeatable (`codex` `cursor` `antigravity` `claude` `grok` `devin-cloud`) |
 | `--display left\|used` | Emphasize remaining (default) or used |
 | `-c` / `--compact` | One-liner: `Codex 42% · Cursor 74%` |
 | `--privacy` | Redact account emails / identifiers |
@@ -176,10 +176,11 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 | **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools | `~/.antigravity` + `~/.gemini` sessions |
 | **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) | — |
 | **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly | `~/.grok` sessions + logs |
+| **Devin Cloud** | `DEVIN_API_KEY` or `~/.local/share/devin/credentials.toml` → api.devin.ai | ACU today / 7d / cycle vs org cap | — (ACUs, not tokens) |
 
 The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 
-Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
+Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity, `devin auth login` / `DEVIN_API_KEY`). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
 Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 

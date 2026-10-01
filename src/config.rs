@@ -150,6 +150,7 @@ fn parse_provider_name(name: &str) -> Option<ProviderArg> {
         "antigravity" => Some(ProviderArg::Antigravity),
         "claude" => Some(ProviderArg::Claude),
         "grok" => Some(ProviderArg::Grok),
+        "devin-cloud" | "devin_cloud" | "devincloud" => Some(ProviderArg::DevinCloud),
         _ => None,
     }
 }

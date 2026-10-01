@@ -4,6 +4,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod devin_cloud;
 pub mod grok;
 pub mod types;
 
@@ -50,6 +51,15 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        // Devin bills in ACUs: a real org cycle cap exists when configured,
+        // but the API exposes no token counts — no ledger.
+        "devin-cloud" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: false,
+            reset_windows: false,
+            local_history: false,
+            token_ledger: false,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -67,6 +77,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "antigravity" => "Antigravity",
         "claude" => "Claude",
         "grok" => "Grok",
+        "devin-cloud" => "Devin Cloud",
         _ => "Unknown",
     }
 }
@@ -174,6 +185,10 @@ pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
         },
         "grok" => match client {
             Some(c) => grok::fetch(c),
+            None => http_unavailable(id),
+        },
+        "devin-cloud" => match client {
+            Some(c) => devin_cloud::fetch(c),
             None => http_unavailable(id),
         },
         _ => ProviderSnapshot::fail(
