@@ -181,14 +181,15 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 | **OMP** | — | — | `~/.omp/agent` sessions |
 | **Droid** | — | tokens only | `~/.factory/sessions` + `<project>/.factory/sessions` |
 | **Pi** | — (ledger only) | — | `~/.pi/agent` sessions |
+| **Kimi** | `~/.kimi*/credentials/` OAuth → `api.kimi.com/coding/v1/usages` | 5h / weekly / monthly + booster wallet | `~/.kimi` + `~/.kimi-code` wire.jsonl |
 
 The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 
-Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
+Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, `kimi login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
 Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 
-Token costs use an embedded USD-per-1M-token price table (Claude, GPT-5/Codex, Gemini, Grok families) with date/vendor-tolerant model matching; unknown models are simply not priced. Override or extend it with `[pricing."<model>"]` in config.
+Token costs use an embedded USD-per-1M-token price table (Claude, GPT-5/Codex, Gemini, Grok, Kimi families) with date/vendor-tolerant model matching; unknown models are simply not priced. Override or extend it with `[pricing."<model>"]` in config.
 
 Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates; `ledger` means a local token-usage scanner ships for the provider. The CLI never manufactures a percentage when a provider only exposes status.
 

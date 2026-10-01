@@ -6,6 +6,7 @@ pub mod codex;
 pub mod cursor;
 pub mod glm;
 pub mod grok;
+pub mod kimi;
 pub mod types;
 
 use crate::cache::SnapshotCache;
@@ -91,6 +92,13 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
             local_history: true,
             token_ledger: true,
         },
+        "kimi" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: true,
+            reset_windows: true,
+            local_history: true,
+            token_ledger: true,
+        },
         _ => ProviderCapabilities {
             real_quota: false,
             money_balance: false,
@@ -113,6 +121,7 @@ pub fn provider_label(id: &str) -> &'static str {
         "omp" => "OMP",
         "droid" => "Droid",
         "pi" => "Pi",
+        "kimi" => "Kimi",
         _ => "Unknown",
     }
 }
@@ -224,6 +233,10 @@ pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
         },
         "glm" => match client {
             Some(c) => glm::fetch(c),
+            None => http_unavailable(id),
+        },
+        "kimi" => match client {
+            Some(c) => kimi::fetch(c),
             None => http_unavailable(id),
         },
         _ => ProviderSnapshot::fail(

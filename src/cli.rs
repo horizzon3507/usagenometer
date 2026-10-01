@@ -117,6 +117,7 @@ pub enum ProviderArg {
     Claude,
     Grok,
     Glm,
+    Kimi,
 }
 
 impl ProviderArg {
@@ -128,6 +129,7 @@ impl ProviderArg {
             Self::Claude => "claude",
             Self::Grok => "grok",
             Self::Glm => "glm",
+            Self::Kimi => "kimi",
         }
     }
 
@@ -139,6 +141,7 @@ impl ProviderArg {
             Self::Claude,
             Self::Grok,
             Self::Glm,
+            Self::Kimi,
         ]
     }
 }
