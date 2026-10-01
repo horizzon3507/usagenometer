@@ -384,7 +384,11 @@ pub enum Command {
     },
 
     /// Interactive TUI
-    Tui,
+    Tui {
+        /// Open directly on the Tokens tab
+        #[arg(long)]
+        tokens: bool,
+    },
 
     /// Generate shell completions to stdout
     Completions {

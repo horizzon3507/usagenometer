@@ -65,7 +65,8 @@ usg tokens                    # token ledger: today/7d/30d per provider
 usg tokens --by model --by day --period month
 usg tokens --since 2026-09-01 -p claude --json
 usg config --dump
-usg tui                     # interactive live view
+usg tui                     # interactive live view (quota tab)
+usg tui --tokens            # open on the token-usage tab
 usg json --pretty
 usg --format prometheus
 usg completions zsh         # write to stdout
@@ -103,7 +104,7 @@ usg --help
 | `history` | Local SQLite snapshots (`--runway` for burn/ETA/reset; `--spark` for sparklines) |
 | `tokens` | Local token ledger — scans agent session logs (`--period today\|week\|month\|all`, `--by model\|project\|session\|day`, `--since`, `--json`) |
 | `config` | Show XDG paths; `--dump` effective TOML |
-| `tui` | Interactive TUI (`q` quit, `r` refresh, `j`/`k` select) |
+| `tui` | Two-tab TUI (`tab`/`1`/`2` switch): **Quota** live meters + **Tokens** ledger dashboard — today/7d/30d totals (in/out/cache, UTC days), per-model and per-project breakdowns, last-14-day chart. `j`/`k` select, `r` refresh/rescan, `q` quit. `--tokens` opens on the Tokens tab. |
 | `completions` | Generate bash/zsh/fish/… completions to stdout |
 | `version` | Print version |
 
