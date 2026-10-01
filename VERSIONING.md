@@ -9,7 +9,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) wit
 | **CLI** | `usagenometer` / `usg` (Rust) — primary | `cli/vX.Y.Z-<channel>` |
 | **GNOME Shell** | GNOME Shell extension (companion) | `gnome/vX.Y.Z-<channel>` |
 
-Surfaces are versioned **independently**. A CLI-only heading is `## v0.1.4-beta · 11/08/2026`; a release with substantial work on both surfaces may use `m` (for example `v0.1.4m-beta`) and split the notes by surface.
+Surfaces are versioned **independently**. A CLI-only heading is `## v0.1.4-beta · 11/08/2026`; a release with substantial work on both surfaces is recorded as a mixed cut — `## v0.1.3m-beta · 01/08/2026` — with the notes split by surface, while git still gets the two prefixed tags (`cli/v0.1.3-beta`, `gnome/v0.1.3-beta`).
 
 **CLI** tags (`cli/v*`) publish to crates.io + AUR + GitHub Releases. **GNOME Shell** tags are companion / changelog artifacts unless explicitly promoted.
 

@@ -1,19 +1,36 @@
 # Changelog
 
-We follow [Semantic Versioning](https://semver.org/) and keep the primary CLI and its GNOME Shell companion as separate installable surfaces.
+We follow [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/). CLI and GNOME Shell version separately.
 
 <details>
 <summary>To see more about versioning, expand this.</summary>
 
-Every release heading starts with `v`, for example `v0.1.4-beta`. The primary **CLI** is tagged as `cli/vX.Y.Z-channel` and publishes to crates.io, AUR, and GitHub Releases. The **GNOME Shell** companion uses `gnome/vX.Y.Z-channel` and is versioned separately.
+Every version string starts with `v` (required), e.g. `v0.1.4-beta`.
 
-When one cut contains substantial user-facing work for both surfaces, it is recorded as a mixed release with `m` before the channel — for example `v0.1.4m-beta` — and its notes split the CLI and GNOME work. A CLI-only release does not bump GNOME merely for being compatible.
+Here the installable surfaces are **CLI** and **GNOME Shell**. Other Option apps swap in their own names the same way — e.g. **Desktop**, **GTK**, **Web** — whatever you actually ship.
+
+| Part | What you install | Git tag |
+| --- | --- | --- |
+| **CLI** | `usagenometer` / `usg` in the terminal | `cli/v0.1.4-beta` |
+| **GNOME Shell** | the top-bar extension, a thin client over `usg json` | `gnome/v0.1.3-beta` |
+
+A new CLI does not always mean a new GNOME Shell build, and the other way around. The `cli/v*` tags publish to crates.io, the AUR and GitHub Releases; `gnome/v*` tags are companion artifacts.
+
+Sometimes one cut ships **both** surfaces. That is a **mixed release**: the heading gets an `m` before the channel (ex: `v0.1.3m-beta`), git gets the two prefixed tags (`cli/v0.1.3-beta` + `gnome/v0.1.3-beta`), and the notes break out each surface so a small touch on one side does not look equal to a large cut on the other.
+
+Each release heading is the version and date (`## v0.1.3m-beta · 01/08/2026`); under it, a short summary ends with a plain sentence like: “This version was made for both GNOME Shell and CLI with a beta release channel on 01/08/2026 (v0.1.3m-beta).”
+
+### What the channel suffix means
 
 | Suffix | In plain words |
 | --- | --- |
-| **-alpha** | Very early; expect missing features and breakage. |
-| **-beta** | Usable, but still settling. |
-| **-stable** | Ready for daily use and deliberately release-ready. |
+| **-alpha** | Very early. Expect missing pieces and lots of bugs. |
+| **-beta** | Mostly there, but still rough. Fine to try; not the “official” install. |
+| **-stable** | Ready for daily use. This is what we put on GitHub Releases and the AUR. |
+
+We only call something **stable** when we mean it. While the CLI and its companion are still settling, builds stay **beta**.
+
+Older GNOME Shell builds used plain integer tags (`v3`…`v9`) before the per-surface scheme; `v0.1.0m-beta` was the first cut under it.
 
 </details>
 
@@ -28,54 +45,37 @@ Fast local snapshots, durable quota alerts, and an actionable local runway view.
 - `usg providers --verbose` exposes the provider contract (`quota`, `balance`, `resets`, `history`) so consumers can distinguish verified meter types without inventing data.
 - Various other reliability tests and documentation polish
 
-## [CLI 0.1.3-beta] - 2026-08-01
+## v0.1.3m-beta · 01/08/2026
 
-> **Beta** — GNOME thin client over `usg json`; ETA alerts; statusline / ops docs.
+GNOME Shell becomes a thin client over `usg json`; the CLI gains ETA alerts, systemd units and statusline / ops docs. This version was made for both GNOME Shell and CLI with a beta release channel on 01/08/2026 (v0.1.3m-beta).
 
-### Added
+### GNOME Shell
+
+- Extension shells out to `usg` / `usagenometer` (`json`, `test`, `providers`) instead of its own JS HTTP/auth providers — no duplicated provider fetch stack.
+- Duplicated provider modules removed (`providers/{codex,cursor,antigravity,cli}`, `usageApi.js`, `codexAuth.js`, `lib/http.js`); the pack list shrinks.
+- Prefs copy for Claude / Grok matches CLI quota support and shows the CLI binary path.
+- `metadata.json` version → `3`.
+
+### CLI
 
 - `--alert-eta HOURS` / config `alert_eta` — warn when history-based exhaustion ETA is within N hours (works with `--notify` / watch).
+- Routing hints include remaining % (e.g. `Codex (8%) low → try Cursor (80%)`).
 - Example systemd user units under [`packaging/systemd/`](packaging/systemd/) for periodic check+notify.
 - Docs: [statusline integrations](docs/statusline.md), [ops/scripting](docs/ops.md), [adding providers](docs/adding-providers.md).
 - CI workflow [`.github/workflows/test.yml`](.github/workflows/test.yml) — `cargo test` + GNOME JS normalizer tests on PRs.
 
-### Changed
+## v0.1.2-beta · 31/07/2026
 
-- Routing hints include remaining % (e.g. `Codex (8%) low → try Cursor (80%)`).
-
-## [GNOME Shell 0.1.3-beta] - 2026-08-01
-
-> **Beta** companion — thin client over the CLI; no duplicated provider fetch stack.
-
-### Changed
-
-- Extension shells out to `usg` / `usagenometer` (`json`, `test`, `providers`) instead of JS HTTP/auth providers.
-- Prefs copy for Claude / Grok matches CLI quota support; shows CLI binary path.
-- Pack list shrinks (no `usageApi.js` / per-provider fetch modules).
-- `metadata.json` version → `3`.
-
-### Removed
-
-- Duplicated GNOME JS provider fetch/auth modules (`providers/{codex,cursor,antigravity,cli}`, `usageApi.js`, `codexAuth.js`, `lib/http.js`).
-
-## [CLI 0.1.2-beta] - 2026-07-31
-
-> **Beta** — Apache-2.0 license; VERSIONING.md; GNOME Shell surface naming.
-
-### Changed
+Apache-2.0 license, VERSIONING.md and the GNOME Shell surface name. This version was made for CLI with a beta release channel on 31/07/2026 (v0.1.2-beta).
 
 - License is **Apache-2.0** (was MIT).
 - Versioning docs live in [VERSIONING.md](VERSIONING.md); changelog points there.
 - Companion surface renamed to **GNOME Shell** (`gnome/v*`); web surface removed from the scheme.
 - Repo/docs references use [optionMusic](https://github.com/fireflylabss/optionMusic) (not optMusic).
 
-## [CLI 0.1.1-beta] - 2026-07-31
+## v0.1.1-beta · 31/07/2026
 
-> **Beta** — config, history/ETA, alerts, doctor, TUI, scripting hooks. Prefer the CLI over the GNOME panel.
-
-### Added
-
-**CLI (Rust)**
+Config, history/ETA, alerts, doctor, TUI and scripting hooks — prefer the CLI over the GNOME panel. This version was made for CLI with a beta release channel on 31/07/2026 (v0.1.1-beta).
 
 - Persistent XDG config (`~/.config/usagenometer/config.toml`) + `usg config [--dump]`; CLI flags override.
 - Threshold alerts (`--alert` / config / per-provider `[alerts]`), optional `notify-send`, watch de-dupe.
@@ -93,23 +93,11 @@ Fast local snapshots, durable quota alerts, and an actionable local runway view.
 - `usg completions <shell>` via clap_complete.
 - crates.io + AUR packaging (`packaging/aur/`); tags `cli/v*`.
 
-## [GNOME Shell 0.1.0-beta] - 2026-07-28
+## v0.1.0m-beta · 28/07/2026
 
-> **Beta** companion — GNOME Shell top-bar meters. Prefer the CLI for day-to-day use.
+First public beta: multi-provider meters in the terminal plus a GNOME Shell top-bar companion — Claude/Grok private APIs can change. This version was made for both CLI and GNOME Shell with a beta release channel on 28/07/2026 (v0.1.0m-beta).
 
-### Added
-
-- Multi-provider top-bar meters + prefs connection tests.
-- Claude / Grok provider modules aligned with CLI OAuth / billing sources.
-- Extension metadata / panel label mark the GNOME UI as beta.
-
-## [CLI 0.1.0-beta] - 2026-07-28
-
-> **Beta** — multi-provider meters work; Claude/Grok private APIs can change. Prefer the CLI over the GNOME panel.
-
-### Added
-
-**CLI (Rust)**
+### CLI
 
 - Terminal meters for Codex, Cursor, Antigravity, Claude, and Grok — black & white panel inspired by [optionMusic](https://github.com/fireflylabss/optionMusic) (`◈ usagenometer`).
 - Binaries `usagenometer` and short alias `usg` (clap help, quiet banner, `--json` / `--pretty`).
@@ -120,12 +108,12 @@ Fast local snapshots, durable quota alerts, and an actionable local runway view.
 - Antigravity: secret store / `~/.gemini` OAuth → Cloud Code quota buckets (Gemini + Claude/GPT).
 - Claude: Anthropic OAuth `GET /api/oauth/usage` from `~/.claude/.credentials.json` (or `Claude Code-credentials` keyring); falls back to Antigravity `3p-*` pools when OAuth is absent but Antigravity is logged in.
 - Grok: OIDC session from `~/.grok/auth.json` → `cli-chat-proxy.grok.com` `/v1/user` + `/v1/billing` (weekly credits / product % / monthly fallback).
-
-### Changed
-
 - README leads with the CLI; GNOME install is documented as **beta**.
-
-### Notes
-
 - Tokens are never written by usagenometer; refresh flows stay with the upstream CLIs (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity).
 - Cursor, Antigravity, Claude OAuth, and Grok billing surfaces are unofficial/private — degrade per-provider when they change.
+
+### GNOME Shell
+
+- Multi-provider top-bar meters + prefs connection tests.
+- Claude / Grok provider modules aligned with CLI OAuth / billing sources.
+- Extension metadata / panel label mark the GNOME UI as beta.
