@@ -635,7 +635,7 @@ fn cmd_tokens(
 ) -> Result<()> {
     let selected: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
     let scan_ids: Vec<&str> = if selected.is_empty() {
-        vec!["claude", "codex", "grok", "gemini", "cursor"]
+        tokens::collect::known_providers().to_vec()
     } else {
         selected.clone()
     };
