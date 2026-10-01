@@ -59,7 +59,8 @@ usg explain [provider]
 usg history --runway          # local burn rate + exhaustion estimate + reset
 usg history --spark
 usg config --dump
-usg tui                     # interactive live view
+usg tui                     # interactive live view (quota tab)
+usg tui --tokens            # open on the token-usage tab
 usg json --pretty
 usg --format prometheus
 usg completions zsh         # write to stdout
@@ -95,7 +96,7 @@ usg --help
 | `explain` | Inline docs for plan/meter meanings |
 | `history` | Local SQLite snapshots (`--runway` for burn/ETA/reset; `--spark` for sparklines) |
 | `config` | Show XDG paths; `--dump` effective TOML |
-| `tui` | Interactive TUI (`q` quit, `r` refresh, `j`/`k` select) |
+| `tui` | Two-tab TUI (`tab`/`1`/`2` switch): **Quota** live meters + **Tokens** ledger dashboard — today/7d/30d totals (in/out/cache, UTC days), per-model and per-project breakdowns, last-14-day chart. `j`/`k` select, `r` refresh/rescan, `q` quit. `--tokens` opens on the Tokens tab. |
 | `completions` | Generate bash/zsh/fish/… completions to stdout |
 | `version` | Print version |
 

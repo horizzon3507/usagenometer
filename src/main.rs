@@ -97,8 +97,8 @@ fn run() -> Result<()> {
         Some(Command::Config { dump }) => {
             cmd_config(&settings, dump);
         }
-        Some(Command::Tui) => {
-            usagenometer::tui::run(&settings)?;
+        Some(Command::Tui { tokens }) => {
+            usagenometer::tui::run(&settings, tokens)?;
         }
         Some(Command::Completions { shell }) => {
             cmd_completions(shell);
