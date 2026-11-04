@@ -24,74 +24,58 @@ pub fn explain(provider: Option<ProviderArg>) -> String {
 
 fn section(p: ProviderArg) -> String {
     match p {
-        ProviderArg::Codex => format!(
-            "Codex\n\
+        ProviderArg::Codex => "Codex\n\
              Source: ~/.codex/auth.json → ChatGPT WHAM usage API\n\
              Meters:\n\
                · 5 hour usage limit — rolling short window (typically ~5h). Burns with Codex/ChatGPT heavy use; resets on a sliding/window schedule.\n\
                · Weekly usage limit — weekly budget across the plan. Lower urgency than 5h but caps sustained use.\n\
-             Display left = remaining; used = consumed toward the cap.\n"
-        ),
-        ProviderArg::Cursor => format!(
-            "Cursor\n\
+             Display left = remaining; used = consumed toward the cap.\n".to_string(),
+        ProviderArg::Cursor => "Cursor\n\
              Source: Cursor state.vscdb session → cursor.com usage-summary\n\
              Meters (names vary by plan):\n\
                · Auto + Composer — included premium / auto model pool for the billing period.\n\
                · API pool — API / usage-based allowance when present.\n\
                · On-demand — overage / on-demand spend when enabled.\n\
-             Percentages are plan-specific; treat them as remaining budget in that pool.\n"
-        ),
-        ProviderArg::Antigravity => format!(
-            "Antigravity\n\
+             Percentages are plan-specific; treat them as remaining budget in that pool.\n".to_string(),
+        ProviderArg::Antigravity => "Antigravity\n\
              Source: Antigravity/Gemini OAuth (secret store or ~/.gemini) → Cloud Code quota API\n\
              Meters: Gemini and third-party (Claude/GPT) quota buckets returned by the quota summary.\n\
              Each bucket is a separate pool; low on one does not always mean low on another.\n\
-             Token refresh may need USAGENOMETER_GOOGLE_CLIENT_ID / USAGENOMETER_GOOGLE_CLIENT_SECRET.\n"
-        ),
-        ProviderArg::Claude => format!(
-            "Claude\n\
+             Token refresh may need USAGENOMETER_GOOGLE_CLIENT_ID / USAGENOMETER_GOOGLE_CLIENT_SECRET.\n".to_string(),
+        ProviderArg::Claude => "Claude\n\
              Source: ~/.claude/.credentials.json (or keyring) → Anthropic OAuth /api/oauth/usage\n\
              Fallback: Antigravity 3p-* Claude pools when OAuth is absent but Antigravity is logged in.\n\
              Meters:\n\
                · 5h / weekly — Claude Code subscription rate windows (similar idea to Codex windows).\n\
-               · Model buckets — per-model or tier limits when the API returns them.\n"
-        ),
-        ProviderArg::Grok => format!(
-            "Grok\n\
+               · Model buckets — per-model or tier limits when the API returns them.\n".to_string(),
+        ProviderArg::Grok => "Grok\n\
              Source: ~/.grok/auth.json → cli-chat-proxy billing\n\
              Meters:\n\
                · Weekly credits / products — credit usage percent and product-level usage.\n\
                · Monthly — fallback monthly allowance when present.\n\
-             Run grok login if auth is missing.\n"
-        ),
-        ProviderArg::Glm => format!(
-            "GLM\n\
+             Run grok login if auth is missing.\n".to_string(),
+        ProviderArg::Glm => "GLM\n\
              Source: ZAI_API_KEY or ~/.claude/settings.json env.ANTHROPIC_AUTH_TOKEN\n\
              (used only when ANTHROPIC_BASE_URL is a z.ai host) → z.ai quota API\n\
              Meters:\n\
                · 5h / weekly — GLM Coding Plan usage windows.\n\
                · Monthly · MCP — monthly tool budget when the plan returns it.\n\
              Token ledger: GLM-plan Claude Code sessions under ~/.claude/projects\n\
-             are counted as provider glm (the claude scanner skips them).\n"
-        ),
-        ProviderArg::Kimi => format!(
-            "Kimi\n\
+             are counted as provider glm (the claude scanner skips them).\n".to_string(),
+        ProviderArg::Kimi => "Kimi\n\
              Source: ~/.kimi*/credentials/ OAuth → api.kimi.com/coding/v1/usages\n\
              Meters:\n\
                · 5h / weekly / monthly limits — Kimi for Coding subscription windows.\n\
                · Booster wallet — pay-as-you-go balance when the account carries one.\n\
              Token refresh reuses the CLI's own OAuth client and is persisted back.\n\
-             Run kimi login if auth is missing.\n"
-        ),
-        ProviderArg::DevinCloud => format!(
-            "Devin Cloud\n\
+             Run kimi login if auth is missing.\n".to_string(),
+        ProviderArg::DevinCloud => "Devin Cloud\n\
              Source: DEVIN_API_KEY or devin auth login (~/.local/share/devin/credentials.toml) → api.devin.ai\n\
              Meters:\n\
                · ACU today / 7d — compute units consumed in the current billing day and trailing week.\n\
                · Cycle ACU — ~30 days vs the org's monthly cap, when one is configured.\n\
              Devin bills in ACUs, not tokens — no token ledger for this provider.\n\
-             Set DEVIN_ORG_ID to skip org discovery on non-Enterprise plans.\n"
-        ),
+             Set DEVIN_ORG_ID to skip org discovery on non-Enterprise plans.\n".to_string(),
     }
 }
 

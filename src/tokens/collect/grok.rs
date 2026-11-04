@@ -17,7 +17,7 @@
 //! Without these session files nothing is emitted: we never invent numbers.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -141,7 +141,7 @@ fn parse_updates(path: &PathBuf) -> (Vec<TokenEvent>, u64) {
         .and_then(|p| p.parent())
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
-        .map(|ws| percent_decode(ws));
+        .map(percent_decode);
     let meta_model = session_metadata_model(session_dir.as_deref());
     let meta_ts = session_metadata_ts(session_dir.as_deref()).unwrap_or(fallback_ts);
 
@@ -235,7 +235,7 @@ fn cumulative_total(usage: &Value) -> Option<u64> {
 
 /// `signals.json` rollup: `totalTokensBeforeCompaction`, `contextTokensUsed`,
 /// `totalTokens`, `primaryModelId` / `modelsUsed`.
-fn reconcile_signals(path: &PathBuf, updates_total: u64, events: &mut Vec<TokenEvent>) {
+fn reconcile_signals(path: &Path, updates_total: u64, events: &mut Vec<TokenEvent>) {
     let Some(value) = util::read_json(path) else {
         return;
     };

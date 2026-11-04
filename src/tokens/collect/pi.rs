@@ -16,6 +16,7 @@
 //!   `model` and `usage` — billed calls that never appear as messages.
 //! - `role:"toolResult"` messages and `type:"compaction"`/`"branch_summary"`
 //!   entries may carry a nested `usage` — counted, model unattributed.
+//!
 //! Pi's `Usage` shape: `{input, output, cacheRead, cacheWrite, reasoning?,
 //! totalTokens, cost:{...}}`; `reasoning` is already inside `output`.
 //!

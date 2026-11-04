@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::http::{HttpClient, HttpError};
@@ -143,7 +143,7 @@ fn state_db_path() -> PathBuf {
 }
 
 fn read_state_keys(
-    path: &PathBuf,
+    path: &Path,
     keys: &[&str],
 ) -> Result<HashMap<String, Option<String>>, rusqlite::Error> {
     let uri = format!("file:{}?mode=ro", path.display());

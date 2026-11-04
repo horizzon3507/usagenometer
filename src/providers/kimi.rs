@@ -325,7 +325,7 @@ fn snapshot_from_usages(payload: &Value) -> ProviderSnapshot {
             meters.push(create_meter(
                 "booster_wallet",
                 "Booster wallet",
-                Some(((total_cents - left_cents) / total_cents).max(0.0).min(1.0)),
+                Some(((total_cents - left_cents) / total_cents).clamp(0.0, 1.0)),
                 Some((left_cents / total_cents).clamp(0.0, 1.0)),
                 Some((total_cents - left_cents) / 100.0),
                 Some(left_cents / 100.0),

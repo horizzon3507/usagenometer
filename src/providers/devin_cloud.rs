@@ -326,7 +326,7 @@ fn meters_from_days(
     cycle_cap: Option<f64>,
 ) -> Vec<UsageMeter> {
     // The newest bucket at or before `now` is the current billing day.
-    let Some(&today_start) = days.keys().filter(|d| (**d) as f64 <= now).next_back() else {
+    let Some(&today_start) = days.keys().rfind(|d| (**d) as f64 <= now) else {
         return Vec::new();
     };
     let mut meters = Vec::new();

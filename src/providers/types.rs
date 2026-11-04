@@ -81,6 +81,7 @@ impl ProviderSnapshot {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_meter(
     id: impl Into<String>,
     title: impl Into<String>,

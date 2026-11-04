@@ -16,7 +16,7 @@ use crate::paths;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenEvent {
-    pub provider: String,        // "claude", "codex", ...
+    pub provider: String, // "claude", "codex", ...
     pub model: Option<String>,
     pub session_id: Option<String>,
     pub project: Option<String>, // project dir or slug
@@ -194,7 +194,10 @@ impl TokenStore {
             .conn
             .prepare("SELECT path, byte_offset FROM token_scan_offsets")?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as u64))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
         })?;
         Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
     }
@@ -405,9 +408,7 @@ pub fn aggregate(events: &[TokenEvent], groups: &[Group]) -> Vec<GroupRow> {
     let mut map: BTreeMap<(String, Vec<String>), Totals> = BTreeMap::new();
     for e in events {
         let keys: Vec<String> = groups.iter().map(|g| group_key(e, *g, local)).collect();
-        map.entry((e.provider.clone(), keys))
-            .or_default()
-            .add(e);
+        map.entry((e.provider.clone(), keys)).or_default().add(e);
     }
     map.into_iter()
         .map(|((provider, keys), totals)| GroupRow {
@@ -521,8 +522,10 @@ mod tests {
 
     #[test]
     fn store_roundtrip_and_dedupe() {
-        let path =
-            std::env::temp_dir().join(format!("usagenometer-tokens-{}.sqlite3", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "usagenometer-tokens-{}.sqlite3",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let store = TokenStore::open_at(path.clone()).unwrap();
         let events = vec![
@@ -577,7 +580,10 @@ mod tests {
         assert_eq!(rows[0].totals.total(), 22);
         assert_eq!(rows[2].provider, "codex");
         // grouping by nothing yields per-provider rows
-        let flat = aggregate(&[event("claude", 1.0, 1, 1), event("claude", 2.0, 2, 2)], &[]);
+        let flat = aggregate(
+            &[event("claude", 1.0, 1, 1), event("claude", 2.0, 2, 2)],
+            &[],
+        );
         assert_eq!(flat.len(), 1);
         assert_eq!(flat[0].totals.input, 3);
     }
@@ -594,7 +600,10 @@ mod tests {
     fn day_boundaries() {
         let utc = time::UtcOffset::UTC;
         // 2026-10-01T12:00:00Z → day starts at 2026-10-01T00:00:00Z
-        assert_eq!(day_start_unix(1_790_812_800.0 + 43200.0, utc), 1_790_812_800.0);
+        assert_eq!(
+            day_start_unix(1_790_812_800.0 + 43200.0, utc),
+            1_790_812_800.0
+        );
         assert_eq!(day_key(1_790_812_800.0 + 43200.0, utc), "2026-10-01");
     }
 
