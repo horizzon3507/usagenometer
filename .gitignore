@@ -1,5 +1,4 @@
-usagenometer@horizzon3507.shell-extension.zip
-schemas/gschemas.compiled
 .codex
+.commandcode/
 dist/
 /target/
