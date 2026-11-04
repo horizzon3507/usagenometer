@@ -41,9 +41,8 @@ cargo install --path . --force
 | Surface | Tag | Ships |
 |---------|-----|-------|
 | **CLI** | `cli/vX.Y.Z-alpha\|beta\|stable` | crates.io + AUR + GitHub Release |
-| **GNOME Shell** | `gnome/vX.Y.Z-…` | GNOME Shell extension (companion) |
 
-See [VERSIONING.md](VERSIONING.md), [CHANGELOG.md](CHANGELOG.md), and [packaging/aur/README.md](packaging/aur/README.md).
+The GNOME Shell companion shipped through `v0.1.5m-beta` and is discontinued. See [VERSIONING.md](VERSIONING.md), [CHANGELOG.md](CHANGELOG.md), and [packaging/aur/README.md](packaging/aur/README.md).
 
 ## Usage
 
@@ -190,53 +189,22 @@ The token ledger records local per-agent token usage into `~/.local/share/usagen
 Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, `kimi login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity, `devin auth login` / `DEVIN_API_KEY`). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
 
-Adding a provider is **Rust-only** (GNOME consumes `usg json`) — see **[docs/adding-providers.md](docs/adding-providers.md)**.
+Adding a provider is **Rust-only** — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 
 Token costs use an embedded USD-per-1M-token price table (Claude, GPT-5/Codex, Gemini, Grok, Kimi families) with date/vendor-tolerant model matching; unknown models are simply not priced. Override or extend it with `[pricing."<model>"]` in config.
 
 Use `usg providers --verbose` to see the provider contract. A `quota` is a verified usage meter; `balance` is a money/credit meter when the upstream source provides one; `resets` and `history` mean that the snapshot carries a reset window and can feed local runway estimates; `ledger` means a local token-usage scanner ships for the provider. The CLI never manufactures a percentage when a provider only exposes status.
 
-## GNOME Shell extension (beta)
-
-The top-bar extension is a **thin client**: it runs `usg json` / `usg test` and renders the panel. Install the CLI on PATH first. Compatible with GNOME Shell `45`–`50`.
-
-When `usg` supports `usg tokens --json`, the dropdown also shows a **Tokens** row (in/out totals + per-provider lines). It probes the CLI once, caches the result under `~/.cache/usagenometer/`, and hides the row entirely when the command is missing or the ledger is empty — toggle it off in preferences via **Show token usage** (`show-tokens`).
-
-```fish
-cd ~/usagenometer
-
-gnome-extensions pack --force \
-  --extra-source=constants.js \
-  --extra-source=lib \
-  --extra-source=providers \
-  --extra-source=icons \
-  -o /tmp
-
-gnome-extensions install --force /tmp/usagenometer@horizzon3507.shell-extension.zip
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/usagenometer@horizzon3507/schemas
-```
-
-Then log out/in (Wayland) and:
-
-```fish
-gnome-extensions enable usagenometer@horizzon3507
-gnome-extensions prefs usagenometer@horizzon3507
-```
-
 ## Tests
 
 ```bash
 cargo test
-gjs -m tests/cliClient.test.js
 ```
 
 ## Layout
 
 ```
 src/                  # Rust CLI (usagenometer / usg)
-extension.js          # GNOME panel + menu (beta thin client)
-prefs.js              # GNOME settings UI (beta)
-providers/            # GNOME CLI bridge + types (no per-provider fetch)
 docs/                 # statusline, ops, adding-providers
 packaging/systemd/    # user timer examples for alerts
 ```
@@ -247,5 +215,4 @@ packaging/systemd/    # user timer examples for alerts
 - `cache_ttl` serves a fresh local snapshot before a network request; when a live request fails after that TTL, a recent last-good snapshot may show as `(stale Xm)`.
 - Alert notifications are edge-triggered and persisted under the XDG cache, so a systemd timer notifies on threshold crossing and once when the meter recovers.
 - Cursor and Antigravity private APIs can change; failures stay per-provider.
-- Nested GNOME Shell is unreliable on Wayland GNOME 50; prefer logout/login after extension install.
 - License: **Apache-2.0**.
