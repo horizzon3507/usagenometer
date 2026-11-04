@@ -326,7 +326,7 @@ fn scan_db_conn(
             .get("created_at")
             .and_then(|v| v.as_str())
             .and_then(parse_rfc3339)
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if *created_col > 0 {
                     *created_col as f64
                 } else {

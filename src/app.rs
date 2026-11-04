@@ -676,7 +676,15 @@ fn cmd_tokens(
     }
 
     if settings.json || matches!(settings.format, Some(OutputFormat::Json)) {
-        return emit_tokens_json(&events, scanned, period, by, settings.pretty, cost, settings);
+        return emit_tokens_json(
+            &events,
+            scanned,
+            period,
+            by,
+            settings.pretty,
+            cost,
+            settings,
+        );
     }
 
     if !settings.quiet {
@@ -719,11 +727,7 @@ fn cmd_tokens(
 }
 
 /// Group keys for an event, mirroring `tokens::aggregate` (for per-row cost).
-fn ev_group_keys(
-    ev: &TokenEvent,
-    groups: &[tokens::Group],
-    local: time::UtcOffset,
-) -> Vec<String> {
+fn ev_group_keys(ev: &TokenEvent, groups: &[tokens::Group], local: time::UtcOffset) -> Vec<String> {
     groups
         .iter()
         .map(|g| match g {
@@ -782,11 +786,20 @@ fn print_tokens_overview(
     ];
     let mut providers: BTreeMap<String, Vec<usagenometer::tokens::TokenEvent>> = BTreeMap::new();
     for e in events {
-        providers.entry(e.provider.clone()).or_default().push(e.clone());
+        providers
+            .entry(e.provider.clone())
+            .or_default()
+            .push(e.clone());
     }
     let header = format!(
         "  {:<12} {:<7} {:>12} {:>12} {:>12} {:>12} {:>14}{}",
-        "provider", "period", "input", "output", "cache-read", "cache-write", "total",
+        "provider",
+        "period",
+        "input",
+        "output",
+        "cache-read",
+        "cache-write",
+        "total",
         if cost { "         $" } else { "" },
     );
     println!("{}", header.with(usagenometer::ui::DIM));

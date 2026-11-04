@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::tokens::TokenEvent;
-use crate::tokens::collect::{ScanOffsets, appended_lines, jsonl_files, parse_rfc3339, project_name};
+use crate::tokens::collect::{
+    ScanOffsets, appended_lines, jsonl_files, parse_rfc3339, project_name,
+};
 
 /// `~/.claude` (or `$CLAUDE_CONFIG_DIR`). Shared with `collect::glm`, whose
 /// sessions live in the same tree.
@@ -180,7 +182,10 @@ mod tests {
 
         // Second scan consumes nothing new; appended lines are picked up.
         assert!(collect(&mut offsets).is_empty());
-        let mut f = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap();
         use std::io::Write;
         writeln!(
             f,

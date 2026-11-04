@@ -11,7 +11,7 @@
 //! the scanner emits nothing — we never synthesize usage.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -86,7 +86,7 @@ fn record_event(record: &Value, fallback_ts: f64) -> Vec<TokenEvent> {
     }]
 }
 
-fn json_file_events(path: &PathBuf) -> Vec<TokenEvent> {
+fn json_file_events(path: &Path) -> Vec<TokenEvent> {
     let Some(value) = util::read_json(path) else {
         return Vec::new();
     };

@@ -133,10 +133,8 @@ pub fn normalize_model(model: &str) -> String {
         s = s[pos + 1..].to_string();
     }
     // Bedrock/Vertex style: us.anthropic.claude-... → claude-...
-    loop {
-        let Some(pos) = s.find('.') else { break };
-        let seg = &s[..pos];
-        if PREFIX_SEGMENTS.contains(&seg) {
+    while let Some(pos) = s.find('.') {
+        if PREFIX_SEGMENTS.contains(&&s[..pos]) {
             s = s[pos + 1..].to_string();
         } else {
             break;

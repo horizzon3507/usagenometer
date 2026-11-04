@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::util::{
-    self, collect_files, file_mtime, get_path, model_on_record, read_jsonl_events, resume_offset,
-    session_on_record, ts_on_record, usage_counts, usage_on_record, UsageCounts,
+    self, UsageCounts, collect_files, file_mtime, get_path, model_on_record, read_jsonl_events,
+    resume_offset, session_on_record, ts_on_record, usage_counts, usage_on_record,
 };
 use crate::tokens::{TokenEvent, TokenStore};
 
@@ -46,7 +46,9 @@ const USAGE_DOC_PATHS: &[&[&str]] = &[
 ];
 
 /// Document array fields that may hold per-message records.
-const RECORD_ARRAYS: &[&str] = &["messages", "history", "turns", "records", "entries", "events"];
+const RECORD_ARRAYS: &[&str] = &[
+    "messages", "history", "turns", "records", "entries", "events",
+];
 
 pub fn scan() -> Vec<TokenEvent> {
     let store = TokenStore::open().ok();
@@ -108,7 +110,10 @@ fn roots_with_hints() -> Vec<(PathBuf, Option<String>)> {
 fn scan_root(root: &Path, hint: Option<&str>, store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     let mut settings_files = Vec::new();
-    for path in collect_files(std::slice::from_ref(&root.to_path_buf()), &["json", "jsonl"]) {
+    for path in collect_files(
+        std::slice::from_ref(&root.to_path_buf()),
+        &["json", "jsonl"],
+    ) {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -568,7 +573,11 @@ mod tests {
         let store = store_at(&dir);
         let sess = dir.join("sessions/-Users-t-code-myapp");
         let mut f = fs::File::create(sess.join("s-2.jsonl")).unwrap();
-        writeln!(f, r#"{{"type":"session_start","cwd":"/Users/t/code/myapp","sessionId":"s-2"}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"session_start","cwd":"/Users/t/code/myapp","sessionId":"s-2"}}"#
+        )
+        .unwrap();
         writeln!(f, r#"{{"type":"message","model":"glm-4.6","timestamp":"2026-09-01T10:00:00Z","message":{{"role":"assistant","usage":{{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":20}}}}}}"#).unwrap();
         writeln!(f, "not json").unwrap();
         write_settings(&dir, 9999, 9999, 9999);

@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::tokens::TokenEvent;
-use crate::tokens::collect::{ScanOffsets, appended_lines, jsonl_files, parse_rfc3339, project_name};
+use crate::tokens::collect::{
+    ScanOffsets, appended_lines, jsonl_files, parse_rfc3339, project_name,
+};
 
 type UsageTuple = (u64, u64, u64, u64); // input, output, cache_read, cache_write
 
@@ -88,9 +90,7 @@ pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
     let history = load_history(&root.join("history.jsonl"));
     let mut events = Vec::new();
     for file in jsonl_files(&root.join("sessions")) {
-        let fallback_session = file
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned());
+        let fallback_session = file.file_stem().map(|s| s.to_string_lossy().into_owned());
         let mut ctx = Ctx {
             session: None,
             cwd: None,
@@ -99,7 +99,13 @@ pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
             prev_total: None,
         };
         for line in appended_lines(&file, offsets) {
-            collect_line(&line, &mut ctx, &history, fallback_session.as_deref(), &mut events);
+            collect_line(
+                &line,
+                &mut ctx,
+                &history,
+                fallback_session.as_deref(),
+                &mut events,
+            );
         }
     }
     events
@@ -185,7 +191,10 @@ fn find_usage(v: &Value, payload: &Value, ctx: &mut Ctx) -> Option<UsageTuple> {
     if payload.get("type").and_then(Value::as_str) == Some("token_count") {
         let info = payload.get("info")?;
         if let Some(u) = info.get("last_token_usage").and_then(usage_tuple) {
-            ctx.prev_total = info.get("total_token_usage").and_then(usage_tuple).or(ctx.prev_total);
+            ctx.prev_total = info
+                .get("total_token_usage")
+                .and_then(usage_tuple)
+                .or(ctx.prev_total);
             return Some(u);
         }
         if let Some(total) = info.get("total_token_usage").and_then(usage_tuple) {
@@ -242,7 +251,8 @@ fn usage_tuple(u: &Value) -> Option<UsageTuple> {
         "cached_input_tokens",
         "cacheReadTokens",
         "cachedTokens",
-    ]) + u.pointer("/input_tokens_details/cached_tokens")
+    ]) + u
+        .pointer("/input_tokens_details/cached_tokens")
         .or_else(|| u.pointer("/prompt_tokens_details/cached_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
