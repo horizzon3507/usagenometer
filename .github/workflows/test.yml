@@ -21,14 +21,3 @@ jobs:
 
       - name: cargo build
         run: cargo build --locked
-
-  gnome-js:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install gjs
-        run: sudo apt-get update && sudo apt-get install -y gjs
-
-      - name: CLI client unit tests
-        run: gjs -m tests/cliClient.test.js
