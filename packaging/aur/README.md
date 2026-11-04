@@ -19,7 +19,8 @@ See [VERSIONING.md](../../VERSIONING.md). Summary:
 | Surface | Tag | Publishes |
 |---------|-----|-----------|
 | CLI | `cli/vX.Y.Z-alpha\|beta\|stable` | crates.io + AUR + GH Release |
-| GNOME Shell | `gnome/vX.Y.Z-…` | companion / changelog |
+
+The GNOME Shell companion shipped through `v0.1.5m-beta` and is discontinued; `gnome/v*` tags are historical.
 
 Arch `pkgver` cannot contain `-`, so `0.1.1-beta` becomes `0.1.1_beta` in the PKGBUILD while the Git tag keeps the SemVer channel.
 
