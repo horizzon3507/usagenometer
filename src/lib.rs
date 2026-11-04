@@ -1,6 +1,9 @@
 //! usagenometer — AI usage meters for Codex, Cursor, Antigravity, and more.
 
+extern crate self as usagenometer;
+
 pub mod alerts;
+pub mod app;
 pub mod cache;
 pub mod cli;
 pub mod config;

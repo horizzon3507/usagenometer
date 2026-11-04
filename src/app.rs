@@ -35,7 +35,7 @@ use usagenometer::ui::{
     print_info, print_status_opts, print_success, print_warn,
 };
 
-fn main() {
+pub fn cli_main() {
     if let Err(err) = run() {
         eprintln!("{} {err}", "error:".with(WHITE));
         for cause in err.chain().skip(1) {
