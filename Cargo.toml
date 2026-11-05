@@ -1,6 +1,6 @@
 [package]
 name = "usagenometer"
-version = "0.1.5-beta"
+version = "0.1.6-beta"
 edition = "2024"
 rust-version = "1.85"
 description = "usagenometer — AI usage meters in the terminal"
@@ -12,7 +12,7 @@ repository = "https://github.com/horizzon3507/usagenometer"
 documentation = "https://github.com/horizzon3507/usagenometer#readme"
 keywords = ["ai", "usage", "quota", "cli", "codex"]
 categories = ["command-line-utilities"]
-exclude = ["target/", ".github/", "dist/", "icons/", "schemas/", "tests/"]
+exclude = ["target/", ".github/", "dist/", "tests/"]
 
 [lib]
 name = "usagenometer"
@@ -27,6 +27,7 @@ crossterm = "0.28"
 dirs = "6"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+aes-gcm = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
