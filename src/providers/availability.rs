@@ -97,7 +97,7 @@ pub fn inspect(id: &str) -> Availability {
         "antigravity" => (
             has_any_command(&["antigravity", "agy"])
                 || app_installed("Antigravity", &["antigravity.desktop"]),
-            description_check(antigravity_auth_probe()),
+            description_check(super::antigravity::auth_description()),
             "antigravity",
         ),
         "grok" => (has_command("grok"), grok_auth(), "grok login"),
@@ -377,17 +377,6 @@ fn token_check(token: &str, expiry: Option<f64>, refreshable: bool, require_jwt:
     }
 }
 
-/// Interim Antigravity credential probe (file presence only) until the agy
-/// keyring resolver lands.
-pub(crate) fn antigravity_auth_probe() -> Result<String, String> {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let oauth = home.join(".gemini").join("oauth_creds.json");
-    if oauth.exists() {
-        return Ok(format!("OAuth session at {}", oauth.display()));
-    }
-    Err(format!("no OAuth session at {}", oauth.display()))
-}
-
 fn description_check(description: Result<String, String>) -> Check {
     match description {
         Ok(_) => READY,
@@ -451,7 +440,7 @@ fn claude_fallback(check: Check) -> Check {
     if check.0 == CredentialStatus::Ready {
         return check;
     }
-    if antigravity_auth_probe().is_ok() {
+    if super::antigravity::auth_description().is_ok() {
         (
             CredentialStatus::Ready,
             "Antigravity credentials can supply Claude/GPT pools; pool availability and server acceptance have not been checked",
