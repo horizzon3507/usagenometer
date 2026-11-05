@@ -150,7 +150,19 @@ fn parse_provider_name(name: &str) -> Option<ProviderArg> {
         "antigravity" => Some(ProviderArg::Antigravity),
         "claude" => Some(ProviderArg::Claude),
         "grok" => Some(ProviderArg::Grok),
+        "glm" => Some(ProviderArg::Glm),
+        "kimi" => Some(ProviderArg::Kimi),
         "devin-cloud" | "devin_cloud" | "devincloud" => Some(ProviderArg::DevinCloud),
+        "fx" => Some(ProviderArg::Fx),
+        "omp" => Some(ProviderArg::Omp),
+        "commandcode" | "command-code" | "command_code" => Some(ProviderArg::CommandCode),
+        "opencode" => Some(ProviderArg::OpenCode),
+        "opencode-go" => Some(ProviderArg::OpenCodeGo),
+        "opencode-zen" => Some(ProviderArg::OpenCodeZen),
+        "droid" => Some(ProviderArg::Droid),
+        "pi" => Some(ProviderArg::Pi),
+        "devin-local" => Some(ProviderArg::DevinLocal),
+        "gemini" => Some(ProviderArg::Gemini),
         _ => None,
     }
 }
@@ -159,6 +171,7 @@ fn parse_provider_name(name: &str) -> Option<ProviderArg> {
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub providers: Vec<ProviderArg>,
+    pub selection: crate::providers::AgentSelection,
     pub display: DisplayMode,
     pub quiet: bool,
     pub compact: bool,

@@ -119,6 +119,21 @@ pub enum ProviderArg {
     Glm,
     Kimi,
     DevinCloud,
+    Fx,
+    /// Token ledger only — no quota meter.
+    Omp,
+    #[value(name = "commandcode")]
+    CommandCode,
+    #[value(name = "opencode")]
+    OpenCode,
+    #[value(name = "opencode-go")]
+    OpenCodeGo,
+    #[value(name = "opencode-zen")]
+    OpenCodeZen,
+    Droid,
+    Pi,
+    DevinLocal,
+    Gemini,
 }
 
 impl ProviderArg {
@@ -132,9 +147,20 @@ impl ProviderArg {
             Self::Glm => "glm",
             Self::Kimi => "kimi",
             Self::DevinCloud => "devin-cloud",
+            Self::Fx => "fx",
+            Self::Omp => "omp",
+            Self::CommandCode => "commandcode",
+            Self::OpenCode => "opencode",
+            Self::OpenCodeGo => "opencode-go",
+            Self::OpenCodeZen => "opencode-zen",
+            Self::Droid => "droid",
+            Self::Pi => "pi",
+            Self::DevinLocal => "devin-local",
+            Self::Gemini => "gemini",
         }
     }
 
+    /// Providers shown by status; local-only agents are listed in `catalog`.
     pub fn all() -> &'static [Self] {
         &[
             Self::Codex,
@@ -145,6 +171,33 @@ impl ProviderArg {
             Self::Glm,
             Self::Kimi,
             Self::DevinCloud,
+            Self::Fx,
+            Self::CommandCode,
+            Self::OpenCodeGo,
+            Self::OpenCodeZen,
+        ]
+    }
+
+    pub fn catalog() -> &'static [Self] {
+        &[
+            Self::Codex,
+            Self::Cursor,
+            Self::Antigravity,
+            Self::Claude,
+            Self::Grok,
+            Self::Glm,
+            Self::Kimi,
+            Self::DevinCloud,
+            Self::Fx,
+            Self::OpenCodeGo,
+            Self::OpenCodeZen,
+            Self::Omp,
+            Self::OpenCode,
+            Self::Droid,
+            Self::Pi,
+            Self::DevinLocal,
+            Self::Gemini,
+            Self::CommandCode,
         ]
     }
 }
@@ -161,8 +214,7 @@ impl ProviderArg {
 \n\
   binaries   usagenometer · usg\n\
   sources    local auth (Codex CLI, Cursor, secret store) — no secrets stored\n\
-  config     ~/.config/usagenometer/config.toml\n\
-  companion  GNOME Shell extension (beta)",
+  config     ~/.config/usagenometer/config.toml",
     after_help = "Shortcuts:\n\
   usg                  same as  usg status\n\
   usg st               same as  usg status\n\
@@ -211,6 +263,18 @@ pub struct Cli {
         help = "Limit to provider(s); repeatable"
     )]
     pub providers: Vec<ProviderArg>,
+
+    #[arg(long, global = true, conflicts_with_all = ["only_unconfigured", "all"],
+        help = "Include installed agents that need credentials")]
+    pub include_unconfigured: bool,
+
+    #[arg(long, global = true, conflicts_with_all = ["include_unconfigured", "all"],
+        help = "Show only installed agents that need credentials")]
+    pub only_unconfigured: bool,
+
+    #[arg(long, global = true, conflicts_with_all = ["include_unconfigured", "only_unconfigured"],
+        help = "Show every agent, including agents not installed")]
+    pub all: bool,
 
     /// Suppress the startup banner
     #[arg(
@@ -330,9 +394,11 @@ pub enum Command {
     #[command(visible_alias = "j")]
     Json,
 
-    /// Exit non-zero if remaining % below threshold
+    /// Check quota headroom and optional token budget.
+    /// Exit 0 when quotas are verified and above threshold, 1 when verification is unavailable,
+    /// or 2 when a quota threshold or token budget is breached.
     Check {
-        /// Fail when any meter remaining % is below this (0–100)
+        /// Require each available quota meter to have at least this much remaining (0–100)
         #[arg(long = "fail-under", value_name = "PCT", default_value_t = 10.0)]
         fail_under: f64,
         /// Fail (exit 2) when token spend in the period reaches USD
@@ -435,6 +501,13 @@ mod tests {
         let cli = Cli::parse_from(["usg", "status", "-p", "codex", "-p", "cursor"]);
         assert_eq!(cli.providers.len(), 2);
         assert_eq!(cli.providers[0], ProviderArg::Codex);
+    }
+
+    #[test]
+    fn parses_commandcode_filter() {
+        let cli = Cli::parse_from(["usg", "tokens", "-p", "commandcode"]);
+        assert_eq!(cli.providers, vec![ProviderArg::CommandCode]);
+        assert_eq!(ProviderArg::CommandCode.id(), "commandcode");
     }
 
     #[test]

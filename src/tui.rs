@@ -81,7 +81,7 @@ fn run_app(
         message: String::new(),
         settings: settings.clone(),
         etas,
-        tokens: load_token_view(),
+        tokens: load_token_view(settings),
         token_state: TableState::default().with_selected(Some(0)),
     };
     app.message = help_for(app.tab).into();
@@ -125,10 +125,10 @@ fn run_app(
                         app.message = "refreshed".into();
                     }
                     Tab::Tokens => {
-                        let ids = providers::resolve_providers(&app.settings.providers);
+                        let ids = providers::selected_ledger_ids(&[], app.settings.selection);
                         match crate::tokens::scan_all(&ids) {
                             Ok(added) => {
-                                app.tokens = load_token_view();
+                                app.tokens = load_token_view(&app.settings);
                                 app.clamp_token_selection();
                                 app.message = format!("rescan · {added} new events");
                             }
@@ -180,7 +180,7 @@ fn run_app(
             app.snaps = snaps;
             app.etas = etas;
             if app.tab == Tab::Tokens {
-                app.tokens = load_token_view();
+                app.tokens = load_token_view(&app.settings);
                 app.clamp_token_selection();
             }
             app.last_refresh = Instant::now();
@@ -210,7 +210,16 @@ fn help_for(tab: Tab) -> &'static str {
 }
 
 fn fetch(settings: &Settings) -> Vec<ProviderSnapshot> {
-    providers::fetch_all_cached(&settings.providers, settings.cache_ttl, settings.history)
+    let mut snaps = providers::fetch_all_cached(
+        &settings.providers,
+        settings.cache_ttl,
+        settings.history,
+        settings.selection,
+    );
+    if settings.selection == providers::AgentSelection::Ready {
+        snaps.retain(|snap| snap.status != SnapshotStatus::Auth);
+    }
+    snaps
 }
 
 fn fetch_with_etas(settings: &Settings) -> (Vec<ProviderSnapshot>, HashMap<String, String>) {
@@ -479,6 +488,9 @@ fn format_detail(
                 };
                 let pct = fraction
                     .map(|f| format!("{:.0}%", f * 100.0))
+                    .or_else(|| {
+                        crate::ui::money_value(m, display).map(|value| format!("${value:.2}"))
+                    })
                     .unwrap_or_else(|| "—".into());
                 let eta = etas
                     .get(&format!("{}/{}", snap.id, m.id))
@@ -548,13 +560,15 @@ impl TokenView {
     }
 }
 
-fn load_token_view() -> TokenView {
+fn load_token_view(settings: &Settings) -> TokenView {
     let now = now_unix();
     let from = day_start(now) - (TOKENS_WINDOW_DAYS - 1.0) * DAY_SECS;
-    let events = TokenStore::open()
+    let mut events = TokenStore::open()
         .ok()
         .and_then(|store| store.events_since(Some(from), None).ok())
         .unwrap_or_default();
+    let ids = providers::selected_ledger_ids(&[], settings.selection);
+    events.retain(|event| ids.contains(&event.provider.as_str()));
     TokenView::build(&events, now)
 }
 
@@ -760,6 +774,7 @@ mod tests {
     fn test_settings() -> Settings {
         Settings {
             providers: vec![],
+            selection: providers::AgentSelection::Ready,
             display: DisplayMode::Left,
             quiet: true,
             compact: false,
