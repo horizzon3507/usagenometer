@@ -1,8 +1,10 @@
 //! Cursor usage summary.
 
 use rusqlite::Connection;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,7 +14,7 @@ use crate::providers::types::{
     ProviderSnapshot, SnapshotStatus, coerce_unix_seconds, create_meter, meter_from_used_percent,
 };
 
-const USAGE_SUMMARY_URL: &str = "https://www.cursor.com/api/usage-summary";
+const USAGE_SUMMARY_URL: &str = "https://cursor.com/api/usage-summary";
 const EXPIRY_SKEW: f64 = 30.0;
 const ID: &str = "cursor";
 const LABEL: &str = "Cursor";
@@ -65,19 +67,121 @@ pub struct Auth {
     pub email: Option<String>,
     pub membership_type: Option<String>,
     pub session_cookie: String,
+    source: String,
+    path: PathBuf,
+    expires_at: f64,
+    refresh_available: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CliCredentials {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+}
+
+struct AuthCandidate {
+    access_token: String,
+    refresh_available: bool,
+    email: Option<String>,
+    membership_type: Option<String>,
+    source: &'static str,
+    path: PathBuf,
 }
 
 fn load_auth() -> Result<Auth, String> {
-    let path = state_db_path();
-    if !path.exists() {
+    resolve_auth(&cli_auth_path(), &state_db_path())
+}
+
+fn resolve_auth(cli_path: &Path, app_path: &Path) -> Result<Auth, String> {
+    let mut failures = Vec::new();
+
+    if let Some(candidate) = match load_cli_candidate(cli_path) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            failures.push(error);
+            None
+        }
+    } {
+        match auth_from_candidate(candidate) {
+            Ok(auth) => return Ok(auth),
+            Err(error) => failures.push(error),
+        }
+    }
+    if let Some(candidate) = match load_app_candidate(app_path) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            failures.push(error);
+            None
+        }
+    } {
+        match auth_from_candidate(candidate) {
+            Ok(auth) => return Ok(auth),
+            Err(error) => failures.push(error),
+        }
+    }
+
+    if failures.is_empty() {
+        Err(format!(
+            "Cursor auth not found at {} or {}. Sign in to Cursor.",
+            cli_path.display(),
+            app_path.display()
+        ))
+    } else {
+        Err(failures.join(" "))
+    }
+}
+
+fn cli_auth_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".config")
+        })
+        .join("cursor")
+        .join("auth.json")
+}
+
+fn load_cli_candidate(path: &Path) -> Result<Option<AuthCandidate>, String> {
+    let contents = match fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(format!(
+                "Failed to read Cursor CLI auth at {}.",
+                path.display()
+            ));
+        }
+    };
+    let credentials: CliCredentials = serde_json::from_slice(&contents)
+        .map_err(|_| format!("Cursor CLI auth at {} is invalid.", path.display()))?;
+    let access_token = normalize_bearer(&credentials.access_token);
+    if access_token.is_empty() {
         return Err(format!(
-            "Cursor state database not found at {}. Sign in to the Cursor app.",
+            "Cursor CLI auth at {} has no access token.",
             path.display()
         ));
     }
+    Ok(Some(AuthCandidate {
+        access_token,
+        refresh_available: credentials
+            .refresh_token
+            .is_some_and(|token| !token.trim().is_empty()),
+        email: None,
+        membership_type: None,
+        source: "Cursor CLI",
+        path: path.to_path_buf(),
+    }))
+}
 
+fn load_app_candidate(path: &Path) -> Result<Option<AuthCandidate>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
     let values = read_state_keys(
-        &path,
+        path,
         &[
             "cursorAuth/accessToken",
             "cursorAuth/cachedEmail",
@@ -86,47 +190,80 @@ fn load_auth() -> Result<Auth, String> {
     )
     .map_err(|_| {
         format!(
-            "Failed to read Cursor state database at {}.",
+            "Failed to read Cursor app state database at {}.",
             path.display()
         )
     })?;
-
-    let access = values
+    let Some(access_token) = values
         .get("cursorAuth/accessToken")
-        .and_then(|v| v.as_ref())
-        .map(|s| normalize_bearer(s))
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            format!(
-                "Cursor auth not found at {}. Sign in to the Cursor app.",
-                path.display()
-            )
-        })?;
+        .and_then(|value| value.as_ref())
+        .map(|value| normalize_bearer(value))
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(AuthCandidate {
+        access_token,
+        refresh_available: false,
+        email: values
+            .get("cursorAuth/cachedEmail")
+            .and_then(|value| value.clone())
+            .filter(|value| !value.trim().is_empty()),
+        membership_type: values
+            .get("cursorAuth/stripeMembershipType")
+            .and_then(|value| value.clone())
+            .filter(|value| !value.trim().is_empty()),
+        source: "Cursor app",
+        path: path.to_path_buf(),
+    }))
+}
 
-    let user_id = user_id_from_token(&access)
-        .ok_or_else(|| "Cursor access token is missing a user id subject.".to_string())?;
-
-    if let Some(exp) = jwt_exp(&access) {
-        let now = now_secs();
-        if exp <= now + EXPIRY_SKEW {
-            return Err("Cursor session token is expired. Open Cursor and sign in again.".into());
-        }
+fn auth_from_candidate(candidate: AuthCandidate) -> Result<Auth, String> {
+    let user_id = user_id_from_token(&candidate.access_token).ok_or_else(|| {
+        format!(
+            "{} auth at {} has an invalid access token subject.",
+            candidate.source,
+            candidate.path.display()
+        )
+    })?;
+    let expires_at = jwt_exp(&candidate.access_token).ok_or_else(|| {
+        format!(
+            "{} auth at {} has an access token without an expiry.",
+            candidate.source,
+            candidate.path.display()
+        )
+    })?;
+    if expires_at <= now_secs() + EXPIRY_SKEW {
+        return Err(format!(
+            "{} access token at {} is expired.",
+            candidate.source,
+            candidate.path.display()
+        ));
     }
 
-    let email = values
-        .get("cursorAuth/cachedEmail")
-        .and_then(|v| v.clone())
-        .filter(|s| !s.trim().is_empty());
-    let membership_type = values
-        .get("cursorAuth/stripeMembershipType")
-        .and_then(|v| v.clone())
-        .filter(|s| !s.trim().is_empty());
-
     Ok(Auth {
-        email,
-        membership_type,
-        session_cookie: format!("WorkosCursorSessionToken={user_id}%3A%3A{access}"),
+        email: candidate.email,
+        membership_type: candidate.membership_type,
+        session_cookie: format!(
+            "WorkosCursorSessionToken={user_id}%3A%3A{}",
+            candidate.access_token
+        ),
+        source: candidate.source.into(),
+        path: candidate.path,
+        expires_at,
+        refresh_available: candidate.refresh_available,
     })
+}
+
+pub(crate) fn auth_description() -> Result<String, String> {
+    let auth = load_auth()?;
+    Ok(format!(
+        "{} ({}) expires at unix {}; refresh token available: {}",
+        auth.source,
+        auth.path.display(),
+        auth.expires_at as u64,
+        if auth.refresh_available { "yes" } else { "no" }
+    ))
 }
 
 fn state_db_path() -> PathBuf {
@@ -153,51 +290,27 @@ fn read_state_keys(
     )?;
     let mut out = HashMap::new();
     for key in keys {
-        let value: Option<String> = match conn.query_row(
-            "SELECT value FROM ItemTable WHERE key = ?1",
+        let value: Option<Vec<u8>> = match conn.query_row(
+            "SELECT CAST(value AS BLOB) FROM ItemTable WHERE CAST(key AS TEXT) = ?1",
             [*key],
-            |row| row.get::<_, String>(0),
+            |row| row.get(0),
         ) {
-            Ok(s) => Some(s),
+            Ok(bytes) => Some(bytes),
             Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(rusqlite::Error::InvalidColumnType(_, _, _)) => {
-                // BLOB fallback
-                conn.query_row(
-                    "SELECT value FROM ItemTable WHERE key = ?1",
-                    [*key],
-                    |row| {
-                        let bytes: Vec<u8> = row.get(0)?;
-                        Ok(String::from_utf8_lossy(&bytes).into_owned())
-                    },
-                )
-                .optional()?
-            }
-            Err(e) => return Err(e),
+            Err(error) => return Err(error),
         };
-        out.insert((*key).to_string(), value);
+        out.insert(
+            (*key).to_string(),
+            value.and_then(|bytes| String::from_utf8(bytes).ok()),
+        );
     }
     Ok(out)
 }
 
-trait OptionalExt<T> {
-    fn optional(self) -> Result<Option<T>, rusqlite::Error>;
-}
-
-impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
-    fn optional(self) -> Result<Option<T>, rusqlite::Error> {
-        match self {
-            Ok(v) => Ok(Some(v)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-}
-
 fn user_id_from_token(token: &str) -> Option<String> {
     let sub = jwt_sub(token)?;
-    let parts: Vec<&str> = sub.split('|').collect();
-    let id = if parts.len() > 1 { parts[1] } else { parts[0] }.trim();
-    if id.is_empty() {
+    let id = sub.strip_prefix("auth0|").unwrap_or(&sub).trim();
+    if id.is_empty() || id.contains('|') {
         None
     } else {
         Some(id.to_string())
@@ -343,11 +456,117 @@ mod tests {
             email: Some("user@example.com".into()),
             membership_type: Some("pro".into()),
             session_cookie: String::new(),
+            source: "Cursor CLI".into(),
+            path: PathBuf::new(),
+            expires_at: now_secs() + 3600.0,
+            refresh_available: true,
         };
         let snap = snapshot_from_usage_summary(&summary, &auth);
         assert_eq!(snap.meters.len(), 2);
         assert_eq!(snap.meters[0].id, "auto_composer");
         assert!((snap.meters[0].percent.unwrap() - 0.7367).abs() < 0.001);
         assert!((snap.meters[1].percent.unwrap() - 0.3664).abs() < 0.001);
+    }
+
+    fn test_token(sub: &str, exp: i64) -> String {
+        use base64::Engine;
+        let claims = serde_json::json!({"sub": sub, "exp": exp});
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+        format!("header.{encoded}.signature")
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "usagenometer-cursor-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn write_app_db(path: &Path, token: &str) {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute("CREATE TABLE ItemTable (key BLOB, value BLOB)", [])
+            .unwrap();
+        for (key, value) in [
+            ("cursorAuth/accessToken", token),
+            ("cursorAuth/cachedEmail", "app-cache@example.test"),
+            ("cursorAuth/stripeMembershipType", "pro"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)",
+                    rusqlite::params![key.as_bytes(), value.as_bytes()],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn resolves_cli_auth_and_builds_workos_cookie_from_auth0_subject() {
+        let cli_path = temp_path("cli");
+        let app_path = temp_path("app-db");
+        let token = test_token("auth0|cursor-user", (now_secs() + 3600.0) as i64);
+        let app_token = test_token("auth0|app-user", (now_secs() + 3600.0) as i64);
+        fs::write(
+            &cli_path,
+            serde_json::json!({"accessToken": token, "refreshToken": "present"}).to_string(),
+        )
+        .unwrap();
+        write_app_db(&app_path, &app_token);
+
+        let auth = resolve_auth(&cli_path, &app_path).unwrap();
+        assert!(
+            auth.session_cookie
+                .starts_with("WorkosCursorSessionToken=cursor-user%3A%3A")
+        );
+        assert_eq!(auth.source, "Cursor CLI");
+        assert!(auth.refresh_available);
+        fs::remove_file(cli_path).unwrap();
+        fs::remove_file(app_path).unwrap();
+    }
+
+    #[test]
+    fn expired_cli_auth_falls_back_to_blob_backed_app_state() {
+        let cli_path = temp_path("expired-cli");
+        let app_path = temp_path("app-db");
+        let expired = test_token("auth0|old-user", 1);
+        let app_token = test_token("auth0|app-user", (now_secs() + 3600.0) as i64);
+        fs::write(
+            &cli_path,
+            serde_json::json!({"accessToken": expired, "refreshToken": "present"}).to_string(),
+        )
+        .unwrap();
+        write_app_db(&app_path, &app_token);
+
+        let auth = resolve_auth(&cli_path, &app_path).unwrap();
+        assert_eq!(auth.source, "Cursor app");
+        assert_eq!(auth.email.as_deref(), Some("app-cache@example.test"));
+        assert_eq!(auth.membership_type.as_deref(), Some("pro"));
+        assert!(
+            auth.session_cookie
+                .starts_with("WorkosCursorSessionToken=app-user%3A%3A")
+        );
+        assert!(!auth.refresh_available);
+        fs::remove_file(cli_path).unwrap();
+        fs::remove_file(app_path).unwrap();
+    }
+
+    #[test]
+    fn invalid_cli_json_falls_back_to_app_and_reports_both_expired_sources() {
+        let cli_path = temp_path("invalid-cli");
+        let app_path = temp_path("expired-app");
+        fs::write(&cli_path, b"{").unwrap();
+        write_app_db(&app_path, &test_token("auth0|old-user", 1));
+        let error = resolve_auth(&cli_path, &app_path)
+            .err()
+            .expect("no valid Cursor source should resolve");
+        assert!(error.contains("Cursor CLI auth"));
+        assert!(error.contains("Cursor app access token"));
+        fs::remove_file(cli_path).unwrap();
+        fs::remove_file(app_path).unwrap();
     }
 }
