@@ -1,24 +1,21 @@
 # Changelog
 
-We follow [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/). CLI and GNOME Shell version separately.
+We follow [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/). usagenometer is a single CLI surface.
 
 <details>
 <summary>To see more about versioning, expand this.</summary>
 
-Every version string starts with `v` (required), e.g. `v0.1.4-beta`.
+Every version string starts with `v` (required), e.g. `v0.1.6-beta`, `v0.1.0m-beta`.
 
-Here the installable surfaces are **CLI** and **GNOME Shell**. Other Option apps swap in their own names the same way — e.g. **Desktop**, **GTK**, **Web** — whatever you actually ship.
+Here the installable surface is **CLI** (`usagenometer` / `usg`). Other apps swap in their own names the same way — e.g. **GNOME**, **Desktop**, **Web** — whatever you actually ship.
 
-| Part | What you install | Git tag |
+| Part | What you install | Example |
 | --- | --- | --- |
-| **CLI** | `usagenometer` / `usg` in the terminal | `cli/v0.1.4-beta` |
-| **GNOME Shell** | the top-bar extension, a thin client over `usg json` | `gnome/v0.1.3-beta` |
+| **CLI** | `usagenometer` / `usg` in the terminal | `v0.1.6-beta` |
 
-A new CLI does not always mean a new GNOME Shell build, and the other way around. The `cli/v*` tags publish to crates.io, the AUR and GitHub Releases; `gnome/v*` tags are companion artifacts.
+With one surface there is no `m` in the tag and no per-surface sections — just the version notes.
 
-Sometimes one cut ships **both** surfaces. That is a **mixed release**: the heading gets an `m` before the channel (ex: `v0.1.3m-beta`), git gets the two prefixed tags (`cli/v0.1.3-beta` + `gnome/v0.1.3-beta`), and the notes break out each surface so a small touch on one side does not look equal to a large cut on the other.
-
-Each release heading is the version and date (`## v0.1.3m-beta · 01/08/2026`); under it, a short summary ends with a plain sentence like: “This version was made for both GNOME Shell and CLI with a beta release channel on 01/08/2026 (v0.1.3m-beta).”
+Each release heading is the version and date (`## v0.1.6-beta · 04/11/2026`); under it, a short summary ends with a plain sentence like: “This version was made for CLI with a beta release channel on 04/11/2026 (v0.1.6-beta).”
 
 ### What the channel suffix means
 
@@ -28,23 +25,47 @@ Each release heading is the version and date (`## v0.1.3m-beta · 01/08/2026`); 
 | **-beta** | Mostly there, but still rough. Fine to try; not the “official” install. |
 | **-stable** | Ready for daily use. This is what we put on GitHub Releases and the AUR. |
 
-We only call something **stable** when we mean it. While the CLI and its companion are still settling, builds stay **beta**.
+We only call something **stable** when we mean it. While the CLI is still settling, builds stay **beta**.
 
-Older GNOME Shell builds used plain integer tags (`v3`…`v9`) before the per-surface scheme; `v0.1.0m-beta` was the first cut under it.
+Versions at `v0.1.5m-beta` and earlier shipped a GNOME Shell companion (tags `gnome/v*`, with an `m` when both surfaces changed). The companion is discontinued from `v0.1.6-beta`; those tags remain historical, and every release from here is CLI-only. Older GNOME Shell builds used plain integer tags (`v3`…`v9`) before the per-surface scheme; `v0.1.0m-beta` was the first cut under it.
 
 </details>
 
+## v0.1.6-beta · 04/11/2026
+
+Command Code joins the quota panel and the token ledger, and the GNOME Shell companion is discontinued. This version was made for CLI with a beta release channel on 04/11/2026 (v0.1.6-beta).
+
+- New `commandcode` ledger provider: scans Command Code transcripts under `~/.commandcode/projects/*/*.jsonl`, counting each assistant message's `inputTokens`, `outputTokens`, `cacheReadTokens` and `cacheWriteTokens` per model, session and project. Editor `.checkpoints.jsonl` sidecars are skipped, and incremental rescans keep per-event dedup.
+- New `commandcode` quota meters: remaining credits in USD plus the five-hour and weekly spend windows, read from the same `api.commandcode.ai/alpha` billing endpoints the CLI's `/usage` view uses. `usg explain commandcode` documents them, and `usg doctor` reports the native login and scan coverage.
+- `-p commandcode` works for both surfaces: status/JSON fetch credits and windows, while `usg tokens -p commandcode` reads the local transcript ledger. `COMMANDCODE_API_URL` points the meter at a staging or local API.
+- **GNOME Shell is discontinued from this release.** The extension sources, preferences UI, gschema, icons, JS bridge and gjs CI job were removed; historical `gnome/v*` tags stay published but receive no new builds.
+- New `fx` provider: AI Gateway credit balance and total spend (the same number `fx credits` shows), using fx's credentials in fx's order: `VERCEL_OIDC_TOKEN`, then `AI_GATEWAY_API_KEY`, then `~/.fx/auth.json`, then `~/.fx/api-key`. Expired logins are left for fx to refresh.
+- New `fx` ledger scanner over `~/.fx/usage.jsonl`. It covers every backend fx routes to (Gateway, Codex and Grok subscriptions, custom endpoints), splits cache tokens out of fx's cache-inclusive input, and skips pending and incident records.
+- `-p omp` and `-p fx` are now accepted. `-p omp` points at `usg tokens`, because OMP has no quota API.
+- All catalog agents are selectable with `-p` and config, including OpenCode, Go, Zen, Droid, Pi, Gemini, Devin (local) and CommandCode.
+- Default displays now include only installed agents with usable native credentials. `--include-unconfigured` adds installed agents needing credentials, `--only-unconfigured` isolates them with setup commands, and `--all` includes even uninstalled agents. `providers --json` reports credential state and makes its local-only validation explicit.
+- Token displays and TUI rescans include every eligible ledger agent independently of the config quota list. `tokens --all` retains access to historical usage; budget checks still count historical spend after uninstall/logout.
+- OpenCode Go reads native API keys and real rolling/weekly/monthly quotas from `/zen/go/v1/usage`, including reset times and source-specific 0–100 percentage normalization. Current OpenCode `opencode.db` credentials are supported without reviving logged-out keys from legacy files.
+- OpenCode Zen reads real credit balances from `/console/api/billing/status` using the selected Console OAuth session and organization. Signed microcent amounts convert to USD; invoiced accounts also show available credit. Model API keys do not count as Console credentials, expired sessions stay hidden until OpenCode refreshes them, and multiple organizations require an explicit selection.
+- Balance-only meters show currency amounts in status, compact output, watch diffs and the TUI instead of unavailable percentages or empty quota bars.
+- Droid native v2 credentials are read through the OS secret store or encrypted file fallback using its actual 16-byte AES-GCM nonce. Unknown credential storage is not treated as a verified login.
+- Explicit API authentication rejections invalidate cached success snapshots instead of reusing them; default displays hide the rejected agent, while diagnostic commands retain failures.
+- `usg doctor` gains fx, OpenCode Go and Zen credential checks; `usg explain` covers every selectable agent.
+- Token scans now commit events, collector checkpoints and scan-completion metadata in one SQLite transaction. Database failures return an error and leave usage available for retry; the TUI reports failed rescans instead of claiming zero new events.
+- `usg check` now distinguishes verified success (exit `0`), unavailable quota verification (exit `1`) and a quota or budget breach (exit `2`). Authentication/API failures, stale fallback and missing percentage quotas cannot approve a check. Breaches take precedence, and diagnostics go to stderr.
+- Token JSON now always includes token counts in `totals`, alongside `groups`; `--cost` adds pricing fields without replacing counts.
+- Cursor recognizes CLI logins before falling back to the app's read-only SQLite state, including BLOB-backed auth entries. Usage requests target `cursor.com` directly so cross-host redirects cannot discard the session cookie.
+- Antigravity prefers agy credentials and falls back to the system app's native OAuth state. Google refresh uses native app metadata, and Cloud Code quota requests include the account project.
+- Grok recognizes native x.ai OIDC sessions and `GROK_HOME`, renews expired sessions under the native credential lock, and atomically preserves rotated refresh tokens in the original auth store.
+- `usg doctor` uses the same credential-source resolvers as live usage and reports expiry and refresh availability without network requests.
+- The local Hyprland/Quickshell top bar stays limited to installed, credential-ready Codex, Antigravity and Devin CLI, with labeled quotas and daily token summaries in one panel.
+- Various other reliability tests and documentation polish
+
 ## v0.1.5m-beta · 01/10/2026
 
-Local token ledger across 13 AI coding agents: per-model, per-project and per-day token burn with USD cost, budget gates, a tokscale-style TUI tab and a GNOME Tokens row — alongside the existing quota meters. This version was made for both GNOME Shell and CLI with a beta release channel on 01/10/2026 (v0.1.5m-beta).
+Local token ledger across 13 AI coding agents: per-model, per-project and per-day token burn with USD cost, budget gates, a tokscale-style TUI tab and a companion GNOME Tokens row — alongside the existing quota meters. This version was made for both GNOME Shell and CLI with a beta release channel on 01/10/2026 (v0.1.5m-beta).
 
-### GNOME Shell
-
-- New "Tokens" row in the panel driven by `usg tokens --json`, showing today's token burn; hidden gracefully when the installed `usg` predates the ledger.
-- `metadata.json` version → `4`.
-
-### CLI
-
+- GNOME Shell (historical): new "Tokens" row driven by `usg tokens --json`, showing today's token burn and hiding gracefully when the installed `usg` predates the ledger; `metadata.json` version → `4`.
 - `usg tokens` — a local token ledger that scans agent session files into SQLite: period/day/model/project/session breakdowns, `--json`, `--privacy` redaction and incremental rescans with per-event dedup.
 - Ledger scanners for 13 providers: Claude Code, Codex, Grok, Gemini, Antigravity, Cursor (state.vscdb), OpenCode, GLM (z.ai via Claude transcripts), OMP, Droid (Factory), Pi, Kimi (kimi-cli + kimi-code) and Devin CLI (`devin/cli/sessions.db` + ATIF transcripts).
 - `usg tokens --cost` — per-model USD spend from a built-in pricing table (overridable via config); `usg check --budget-usd` exits non-zero when a period's spend crosses a budget.
@@ -57,7 +78,7 @@ Local token ledger across 13 AI coding agents: per-model, per-project and per-da
 
 Fast local snapshots, durable quota alerts, and an actionable local runway view. This version was made for CLI with a beta release channel on 11/08/2026 (v0.1.4-beta).
 
-- `cache_ttl` now serves a fresh local snapshot before contacting provider APIs, making `usg -c -q`, prompts, bars, and the GNOME thin client fast by default; stale fallback remains visibly marked after a failed live refresh.
+- `cache_ttl` now serves a fresh local snapshot before contacting provider APIs, making `usg -c -q`, prompts and bars fast by default; stale fallback remains visibly marked after a failed live refresh.
 - Alert notifications persist their active state under the XDG cache: systemd timers notify once on a threshold crossing, stop repeating an already-active alert, and send a low-urgency recovery notification once it clears.
 - `usg history --runway` turns local snapshots into per-meter used percentage, sample count, estimated exhaustion runway, and next reset when supplied by the provider. Flat or reset-heavy series remain explicitly unestimated.
 - `usg tui` now shows the same history-backed runway alongside each selected meter.
@@ -66,22 +87,16 @@ Fast local snapshots, durable quota alerts, and an actionable local runway view.
 
 ## v0.1.3m-beta · 01/08/2026
 
-GNOME Shell becomes a thin client over `usg json`; the CLI gains ETA alerts, systemd units and statusline / ops docs. This version was made for both GNOME Shell and CLI with a beta release channel on 01/08/2026 (v0.1.3m-beta).
+The GNOME Shell companion becomes a thin client over `usg json`; the CLI gains ETA alerts, systemd units and statusline / ops docs. This version was made for both GNOME Shell and CLI with a beta release channel on 01/08/2026 (v0.1.3m-beta).
 
-### GNOME Shell
-
-- Extension shells out to `usg` / `usagenometer` (`json`, `test`, `providers`) instead of its own JS HTTP/auth providers — no duplicated provider fetch stack.
-- Duplicated provider modules removed (`providers/{codex,cursor,antigravity,cli}`, `usageApi.js`, `codexAuth.js`, `lib/http.js`); the pack list shrinks.
-- Prefs copy for Claude / Grok matches CLI quota support and shows the CLI binary path.
-- `metadata.json` version → `3`.
-
-### CLI
-
+- GNOME Shell (historical): the extension shells out to `usg` / `usagenometer` (`json`, `test`, `providers`) instead of its own JS HTTP/auth providers — no duplicated provider fetch stack.
+- GNOME Shell (historical): duplicated provider modules removed (`providers/{codex,cursor,antigravity,cli}`, `usageApi.js`, `codexAuth.js`, `lib/http.js`); the pack list shrinks.
+- GNOME Shell (historical): prefs copy for Claude / Grok matches CLI quota support and shows the CLI binary path; `metadata.json` version → `3`.
 - `--alert-eta HOURS` / config `alert_eta` — warn when history-based exhaustion ETA is within N hours (works with `--notify` / watch).
 - Routing hints include remaining % (e.g. `Codex (8%) low → try Cursor (80%)`).
 - Example systemd user units under [`packaging/systemd/`](packaging/systemd/) for periodic check+notify.
 - Docs: [statusline integrations](docs/statusline.md), [ops/scripting](docs/ops.md), [adding providers](docs/adding-providers.md).
-- CI workflow [`.github/workflows/test.yml`](.github/workflows/test.yml) — `cargo test` + GNOME JS normalizer tests on PRs.
+- CI workflow [`.github/workflows/test.yml`](.github/workflows/test.yml) — `cargo test` plus the GNOME JS normalizer tests on PRs.
 
 ## v0.1.2-beta · 31/07/2026
 
@@ -116,8 +131,6 @@ Config, history/ETA, alerts, doctor, TUI and scripting hooks — prefer the CLI 
 
 First public beta: multi-provider meters in the terminal plus a GNOME Shell top-bar companion — Claude/Grok private APIs can change. This version was made for both CLI and GNOME Shell with a beta release channel on 28/07/2026 (v0.1.0m-beta).
 
-### CLI
-
 - Terminal meters for Codex, Cursor, Antigravity, Claude, and Grok — black & white panel inspired by [optionMusic](https://github.com/fireflylabss/optionMusic) (`◈ usagenometer`).
 - Binaries `usagenometer` and short alias `usg` (clap help, quiet banner, `--json` / `--pretty`).
 - Commands: `status` (`st` / `s`, default), `watch` (`w`), `test` (`t`), `providers` (`ls`), `json` (`j`), `version`.
@@ -127,12 +140,6 @@ First public beta: multi-provider meters in the terminal plus a GNOME Shell top-
 - Antigravity: secret store / `~/.gemini` OAuth → Cloud Code quota buckets (Gemini + Claude/GPT).
 - Claude: Anthropic OAuth `GET /api/oauth/usage` from `~/.claude/.credentials.json` (or `Claude Code-credentials` keyring); falls back to Antigravity `3p-*` pools when OAuth is absent but Antigravity is logged in.
 - Grok: OIDC session from `~/.grok/auth.json` → `cli-chat-proxy.grok.com` `/v1/user` + `/v1/billing` (weekly credits / product % / monthly fallback).
-- README leads with the CLI; GNOME install is documented as **beta**.
 - Tokens are never written by usagenometer; refresh flows stay with the upstream CLIs (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity).
 - Cursor, Antigravity, Claude OAuth, and Grok billing surfaces are unofficial/private — degrade per-provider when they change.
-
-### GNOME Shell
-
-- Multi-provider top-bar meters + prefs connection tests.
-- Claude / Grok provider modules aligned with CLI OAuth / billing sources.
-- Extension metadata / panel label mark the GNOME UI as beta.
+- GNOME Shell (historical): multi-provider top-bar meters and prefs connection tests; Claude / Grok modules aligned with the CLI OAuth / billing sources; metadata and panel label marked the UI as beta.
