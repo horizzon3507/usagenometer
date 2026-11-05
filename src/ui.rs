@@ -112,6 +112,7 @@ pub fn print_compact(snapshots: &[ProviderSnapshot], display: DisplayMode) {
         };
         let pct = fraction
             .map(|f| format!("{:.0}%", f * 100.0))
+            .or_else(|| money_value(meter, display).map(|value| format!("${value:.2}")))
             .unwrap_or_else(|| "—".into());
         let stale = snap
             .stale_age_secs
@@ -196,6 +197,24 @@ fn print_meter(meter: &UsageMeter, display: DisplayMode, color: bool, eta: Optio
             .percent
             .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
     };
+    if fraction.is_none() {
+        if let Some(value) = money_value(meter, display) {
+            let reset = format_reset(meter);
+            let eta = eta
+                .map(|value| format!("  ·  eta {value}"))
+                .unwrap_or_default();
+            let line = format!(
+                "    {:<18} ${value:.2}{reset}{eta}",
+                truncate(&meter.title, 18)
+            );
+            if color {
+                println!("{}", line.with(GRAY));
+            } else {
+                println!("{line}");
+            }
+            return;
+        }
+    }
     let bar = meter_bar(fraction.unwrap_or(0.0), 18);
     let pct = fraction
         .map(|f| format!("{:>3.0}%", f * 100.0))
@@ -203,7 +222,7 @@ fn print_meter(meter: &UsageMeter, display: DisplayMode, color: bool, eta: Optio
     let reset = format_reset(meter);
     let eta_s = eta.map(|e| format!("  ·  eta {e}")).unwrap_or_default();
     let unit = match meter.unit.as_str() {
-        "usd" => {
+        "usd" | "USD" => {
             let used = meter
                 .used
                 .map(|u| format!("${u:.2}"))
@@ -327,23 +346,32 @@ pub fn print_diff(prev: &[ProviderSnapshot], next: &[ProviderSnapshot], display:
             };
             let old_f = meter_fraction(old_m, display);
             let new_f = meter_fraction(meter, display);
-            match (old_f, new_f) {
-                (Some(a), Some(b)) if (a - b).abs() >= 0.005 => {
-                    any = true;
-                    let line = format!(
-                        "  {} {} {:.0}% → {:.0}%",
-                        snap.label,
-                        meter.title,
-                        a * 100.0,
-                        b * 100.0
-                    );
-                    if color {
-                        println!("{}", line.with(BRIGHT));
-                    } else {
-                        println!("{line}");
+            let line = match (old_f, new_f) {
+                (Some(a), Some(b)) if (a - b).abs() >= 0.005 => Some(format!(
+                    "  {} {} {:.0}% → {:.0}%",
+                    snap.label,
+                    meter.title,
+                    a * 100.0,
+                    b * 100.0,
+                )),
+                (None, None) => match (money_value(old_m, display), money_value(meter, display)) {
+                    (Some(a), Some(b)) if a != b => {
+                        let old = format!("${a:.2}");
+                        let new = format!("${b:.2}");
+                        (old != new)
+                            .then(|| format!("  {} {} {old} → {new}", snap.label, meter.title))
                     }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(line) = line {
+                any = true;
+                if color {
+                    println!("{}", line.with(BRIGHT));
+                } else {
+                    println!("{line}");
                 }
-                _ => {}
             }
         }
     }
@@ -361,4 +389,15 @@ fn meter_fraction(meter: &UsageMeter, display: DisplayMode) -> Option<f64> {
             .percent
             .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
     }
+}
+
+pub(crate) fn money_value(meter: &UsageMeter, display: DisplayMode) -> Option<f64> {
+    if !meter.unit.eq_ignore_ascii_case("usd") {
+        return None;
+    }
+    match display {
+        DisplayMode::Left => meter.left.or(meter.used),
+        DisplayMode::Used => meter.used.or(meter.left),
+    }
+    .filter(|value| value.is_finite())
 }

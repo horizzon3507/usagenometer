@@ -5,9 +5,11 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod commandcode;
 pub mod cursor;
 pub mod devin_local;
 pub mod droid;
+pub mod fx;
 pub mod gemini;
 pub mod glm;
 pub mod grok;
@@ -27,6 +29,7 @@ pub fn known_providers() -> &'static [&'static str] {
     &[
         "claude",
         "codex",
+        "commandcode",
         "grok",
         "gemini",
         "antigravity",
@@ -38,6 +41,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "pi",
         "kimi",
         "devin-local",
+        "fx",
     ]
 }
 
@@ -47,6 +51,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
     match provider {
         "claude" => claude::scan(),
         "codex" => codex::scan(),
+        "commandcode" => commandcode::scan(),
         "grok" => grok::scan(),
         "gemini" => gemini::scan(),
         "antigravity" => antigravity::scan(),
@@ -58,6 +63,7 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "pi" => pi::scan(),
         "kimi" => kimi::scan(),
         "devin-local" => devin_local::scan(),
+        "fx" => fx::scan(),
         _ => Vec::new(),
     }
 }
@@ -67,6 +73,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
     match provider {
         "claude" => claude::scan_roots(),
         "codex" => codex::scan_roots(),
+        "commandcode" => commandcode::scan_roots(),
         "grok" => grok::scan_roots(),
         "gemini" => gemini::scan_roots(),
         "antigravity" => antigravity::scan_roots(),
@@ -78,6 +85,7 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "pi" => pi::scan_roots(),
         "kimi" => kimi::scan_roots(),
         "devin-local" => devin_local::scan_roots(),
+        "fx" => fx::scan_roots(),
         _ => Vec::new(),
     }
 }

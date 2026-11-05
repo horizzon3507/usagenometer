@@ -310,6 +310,7 @@ mod tests {
         use crate::config::ConfigFile;
         Settings {
             providers: vec![],
+            selection: crate::providers::AgentSelection::Ready,
             display: DisplayMode::Used,
             quiet: true,
             compact: false,
@@ -331,6 +332,7 @@ mod tests {
         use crate::config::ConfigFile;
         Settings {
             providers: vec![],
+            selection: crate::providers::AgentSelection::Ready,
             display: DisplayMode::Used,
             quiet: true,
             compact: false,

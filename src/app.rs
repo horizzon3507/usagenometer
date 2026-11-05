@@ -73,7 +73,7 @@ fn run() -> Result<()> {
             cmd_test(&settings, provider)?;
         }
         Some(Command::Providers { verbose }) => {
-            cmd_providers(settings.quiet, verbose);
+            cmd_providers(&settings, &cli.providers, verbose)?;
         }
         Some(Command::Json) => {
             cmd_json(&settings)?;
@@ -83,7 +83,7 @@ fn run() -> Result<()> {
             budget_usd,
             period,
         }) => {
-            cmd_check(&settings, fail_under, budget_usd, period)?;
+            cmd_check(&settings, &cli.providers, fail_under, budget_usd, period)?;
         }
         Some(Command::Doctor) => {
             let checks = doctor::run(settings.privacy);
@@ -101,7 +101,14 @@ fn run() -> Result<()> {
             since,
             cost,
         }) => {
-            cmd_tokens(&settings, period, &by, since.as_deref(), cost)?;
+            cmd_tokens(
+                &settings,
+                &cli.providers,
+                period,
+                &by,
+                since.as_deref(),
+                cost,
+            )?;
         }
         Some(Command::History {
             limit,
@@ -132,13 +139,10 @@ fn build_settings(cli: &Cli) -> Settings {
     let config = ConfigFile::load();
     let providers = if !cli.providers.is_empty() {
         cli.providers.clone()
+    } else if cli.all || cli.include_unconfigured || cli.only_unconfigured {
+        vec![]
     } else {
-        let from_cfg = config.parse_providers();
-        if from_cfg.is_empty() {
-            vec![]
-        } else {
-            from_cfg
-        }
+        config.parse_providers()
     };
     let display = cli.display.unwrap_or_else(|| config.display_mode());
     let compact = cli.compact || config.compact;
@@ -149,6 +153,15 @@ fn build_settings(cli: &Cli) -> Settings {
     let json = cli.json || matches!(cli.format, Some(OutputFormat::Json));
     Settings {
         providers,
+        selection: if cli.all {
+            providers::AgentSelection::All
+        } else if cli.only_unconfigured {
+            providers::AgentSelection::OnlyUnconfigured
+        } else if cli.include_unconfigured {
+            providers::AgentSelection::IncludeUnconfigured
+        } else {
+            providers::AgentSelection::Ready
+        },
         display,
         quiet: cli.quiet,
         compact,
@@ -166,9 +179,24 @@ fn build_settings(cli: &Cli) -> Settings {
     }
 }
 
-fn fetch(settings: &Settings) -> Vec<usagenometer::providers::types::ProviderSnapshot> {
-    let mut snaps =
-        providers::fetch_all_cached(&settings.providers, settings.cache_ttl, settings.history);
+fn fetch(
+    settings: &Settings,
+    diagnostic: bool,
+) -> Vec<usagenometer::providers::types::ProviderSnapshot> {
+    let selection = if diagnostic && !settings.providers.is_empty() {
+        providers::AgentSelection::All
+    } else {
+        settings.selection
+    };
+    let mut snaps = providers::fetch_all_cached(
+        &settings.providers,
+        settings.cache_ttl,
+        settings.history,
+        selection,
+    );
+    if !diagnostic && settings.selection == providers::AgentSelection::Ready {
+        snaps.retain(|snap| snap.status != usagenometer::providers::types::SnapshotStatus::Auth);
+    }
     if settings.privacy {
         privacy::redact_snapshots(&mut snaps);
     }
@@ -194,7 +222,7 @@ fn order_snapshots(
 }
 
 fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
-    let snaps = fetch(settings);
+    let snaps = fetch(settings, false);
 
     if settings.json || matches!(settings.format, Some(OutputFormat::Json)) {
         return emit_json(&snaps, settings.pretty);
@@ -210,6 +238,14 @@ fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
 
     if !settings.quiet {
         banner();
+    }
+    if snaps.is_empty() {
+        if !settings.quiet {
+            print_info(
+                "no matching agents; use usg providers --only-unconfigured to set up credentials, or --all to list every agent",
+            );
+        }
+        return Ok(());
     }
 
     let history = HistoryStore::open().ok();
@@ -252,14 +288,14 @@ fn cmd_status(settings: &Settings, compact: bool) -> Result<()> {
 fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
     if settings.json || matches!(settings.format, Some(OutputFormat::Json)) {
         loop {
-            let snaps = fetch(settings);
+            let snaps = fetch(settings, false);
             emit_json(&snaps, settings.pretty)?;
             thread::sleep(Duration::from_secs(interval));
         }
     }
     if matches!(settings.format, Some(OutputFormat::Prometheus)) {
         loop {
-            let snaps = fetch(settings);
+            let snaps = fetch(settings, false);
             export::emit_prometheus(&snaps)?;
             thread::sleep(Duration::from_secs(interval));
         }
@@ -269,7 +305,7 @@ fn cmd_watch(settings: &Settings, interval: u64, diff: bool) -> Result<()> {
     let mut alert_store = settings.notify.then(AlertStateStore::open);
 
     loop {
-        let snaps = fetch(settings);
+        let snaps = fetch(settings, false);
 
         if diff {
             if let Some(ref p) = prev {
@@ -354,7 +390,9 @@ fn cmd_test(settings: &Settings, provider: Option<ProviderArg>) -> Result<()> {
     }
     let ids: Vec<&str> = match provider {
         Some(p) => vec![p.id()],
-        None => resolve_providers(&settings.providers),
+        None => {
+            providers::selected_ids(&resolve_providers(&settings.providers), settings.selection)
+        }
     };
 
     let mut failures = 0usize;
@@ -384,15 +422,53 @@ fn cmd_test(settings: &Settings, provider: Option<ProviderArg>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_providers(quiet: bool, verbose: bool) {
-    if !quiet {
+fn cmd_providers(settings: &Settings, filter: &[ProviderArg], verbose: bool) -> Result<()> {
+    if !settings.quiet && !settings.json {
         banner();
     }
-    for p in ProviderArg::all() {
-        let mut line = format!("  {}  {}", p.id(), providers::provider_label(p.id()));
+    let mut rows = Vec::new();
+    for p in ProviderArg::catalog() {
+        if !filter.is_empty() && !filter.contains(p) {
+            continue;
+        }
+        let state = providers::availability::inspect(p.id());
+        if !settings.selection.matches(&state) {
+            continue;
+        }
+        let c = providers::provider_capabilities(p.id());
+        if settings.json {
+            rows.push(serde_json::json!({
+                "id": p.id(),
+                "label": providers::provider_label(p.id()),
+                "installed": state.installed,
+                "credentials": state.credentials,
+                "credential_validation": "local",
+                "ready": state.ready(),
+                "detail": state.detail,
+                "setup": state.setup,
+                "quota": c.real_quota,
+                "balance": c.money_balance,
+                "token_ledger": c.token_ledger,
+            }));
+            continue;
+        }
+        let mut line = format!(
+            "  {}  {}  ·  {}  ·  {}",
+            p.id(),
+            providers::provider_label(p.id()),
+            if state.installed {
+                "installed"
+            } else {
+                "not installed"
+            },
+            state.credentials
+        );
         if verbose {
-            let c = providers::provider_capabilities(p.id());
-            let mut facts = vec![if c.real_quota { "quota" } else { "status only" }];
+            line.push_str(&format!("  ·  {}", state.detail));
+            let mut facts = Vec::new();
+            if c.real_quota {
+                facts.push("quota");
+            }
             if c.money_balance {
                 facts.push("balance");
             }
@@ -405,25 +481,41 @@ fn cmd_providers(quiet: bool, verbose: bool) {
             if c.token_ledger {
                 facts.push("ledger");
             }
+            if facts.is_empty() {
+                facts.push("no usage API");
+            }
             line.push_str(&format!("  ·  {}", facts.join(", ")));
+        }
+        if !state.ready() {
+            line.push_str(&format!("  ·  {}", state.setup));
         }
         println!("{}", line.with(WHITE));
     }
-    println!();
+    if settings.json {
+        if settings.pretty {
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        } else {
+            println!("{}", serde_json::to_string(&rows)?);
+        }
+    } else {
+        println!();
+    }
+    Ok(())
 }
 
 fn cmd_json(settings: &Settings) -> Result<()> {
-    let snaps = fetch(settings);
+    let snaps = fetch(settings, false);
     emit_json(&snaps, settings.pretty)
 }
 
 fn cmd_check(
     settings: &Settings,
+    ledger_filter: &[ProviderArg],
     fail_under: f64,
     budget_usd: Option<f64>,
     period: Option<BudgetPeriod>,
 ) -> Result<()> {
-    let snaps = fetch(settings);
+    let snaps = fetch(settings, true);
     if settings.json {
         emit_json(&snaps, settings.pretty)?;
     } else if matches!(settings.format, Some(OutputFormat::Prometheus)) {
@@ -441,7 +533,7 @@ fn cmd_check(
             },
         );
     }
-    let (mut ok, mut messages) = export::check_fail_under(&snaps, fail_under);
+    let mut report = export::check_fail_under(&snaps, fail_under);
 
     // Token budget gate: CLI flag wins over config.toml `budget_usd`/`budget_period`.
     if let Some(budget) = budget_usd.or_else(|| settings.config.budget()) {
@@ -449,13 +541,18 @@ fn cmd_check(
             .map(|p| p.id().to_string())
             .or_else(|| settings.config.budget_window())
             .unwrap_or_else(|| "day".to_string());
-        let provider_ids: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
+        // Removing an agent or its login must not erase spend from a budget check.
+        let provider_ids =
+            providers::selected_ledger_ids(ledger_filter, providers::AgentSelection::All);
         let scanned = tokens::scan_all(&provider_ids)?;
         let store = tokens::TokenStore::open()?;
         let events =
             events_for_providers(&store, Some(budget_window_start(&window)), &provider_ids)?;
         let (total, unpriced) = pricing::total_cost_usd(&events, &settings.config.pricing);
-        if !settings.quiet && !settings.json {
+        if !settings.quiet
+            && !settings.json
+            && !matches!(settings.format, Some(OutputFormat::Prometheus))
+        {
             let mut line = format!(
                 "tokens {window} · ${total:.4} / ${budget:.2} budget · {} events",
                 events.len()
@@ -470,33 +567,39 @@ fn cmd_check(
         }
         let (budget_ok, budget_msgs) = export::check_budget_usd(total, budget, &window);
         if !budget_ok {
-            ok = false;
-            messages.extend(budget_msgs);
+            report.outcome = export::CheckOutcome::Breached;
+            report.messages.extend(budget_msgs);
         }
     }
 
-    if !ok {
-        for m in &messages {
-            print_error(m);
+    let exit_code = match report.outcome {
+        export::CheckOutcome::Passed => 0,
+        export::CheckOutcome::Breached => 2,
+        export::CheckOutcome::Unavailable => 1,
+    };
+    if exit_code != 0 {
+        for message in &report.messages {
+            eprintln!("error: {message}");
         }
-        std::process::exit(2);
+        std::process::exit(exit_code);
     }
-    if !settings.quiet && !settings.compact && !settings.json {
+    if !settings.quiet
+        && !settings.compact
+        && !settings.json
+        && !matches!(settings.format, Some(OutputFormat::Prometheus))
+    {
         print_success(&format!("all meters above {fail_under:.0}% remaining"));
     }
     Ok(())
 }
 
-/// Events since `since_unix`, filtered to `provider_ids` (empty = all).
+/// Events since `since_unix`, restricted to the selected agents.
 fn events_for_providers(
     store: &tokens::TokenStore,
     since_unix: Option<f64>,
     provider_ids: &[&str],
 ) -> Result<Vec<TokenEvent>> {
     let events = store.events_since(since_unix, None)?;
-    if provider_ids.is_empty() {
-        return Ok(events);
-    }
     Ok(events
         .into_iter()
         .filter(|ev| provider_ids.contains(&ev.provider.as_str()))
@@ -628,17 +731,13 @@ fn cmd_history(
 /// `usg tokens` — scan local agent logs (incremental) and report the ledger.
 fn cmd_tokens(
     settings: &Settings,
+    ledger_filter: &[ProviderArg],
     period: TokenPeriod,
     by: &[TokenGroupBy],
     since: Option<&str>,
     cost: bool,
 ) -> Result<()> {
-    let selected: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
-    let scan_ids: Vec<&str> = if selected.is_empty() {
-        tokens::collect::known_providers().to_vec()
-    } else {
-        selected.clone()
-    };
+    let scan_ids = providers::selected_ledger_ids(ledger_filter, settings.selection);
     let scanned = tokens::scan_all(&scan_ids)?;
     let store = TokenStore::open()?;
     let local = tokens::local_offset();
@@ -663,10 +762,7 @@ fn cmd_tokens(
         .reduce(f64::max);
 
     let mut events = store.events_since(lower, None)?;
-    if !selected.is_empty() {
-        let wanted: std::collections::HashSet<&str> = selected.iter().copied().collect();
-        events.retain(|e| wanted.contains(e.provider.as_str()));
-    }
+    events.retain(|e| scan_ids.contains(&e.provider.as_str()));
     if settings.privacy {
         for e in &mut events {
             if let Some(p) = e.project.as_mut() {
@@ -698,7 +794,9 @@ fn cmd_tokens(
     }
 
     if events.is_empty() {
-        print_info("no token events yet — scanned ~/.claude and ~/.codex local logs");
+        print_info(
+            "no token events for the selected agents and period; use usg providers --only-unconfigured for setup or usg tokens --all for historical usage",
+        );
         println!();
         return Ok(());
     }

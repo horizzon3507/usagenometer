@@ -59,9 +59,6 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
         }
     }
 
-    // Token ledger: best-effort rescan so an exporter call stays current,
-    // then emit whatever the store holds. Scans are idempotent and
-    // failure-tolerant; a missing/unopenable store emits nothing.
     crate::tokens::scan_all(crate::tokens::collect::known_providers())?;
     emit_token_metrics(&mut out)?;
     Ok(())
@@ -145,32 +142,104 @@ fn escape_label(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Exit non-zero if any OK meter has remaining % below `fail_under` (0–100).
-/// Semantics: `--fail-under 10` fails when remaining < 10% (i.e. used > 90%).
-pub fn check_fail_under(snaps: &[ProviderSnapshot], fail_under: f64) -> (bool, Vec<String>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckOutcome {
+    Passed,
+    Breached,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReport {
+    pub outcome: CheckOutcome,
+    pub messages: Vec<String>,
+}
+
+/// Check whether verifiable quota meters remain at least `fail_under` percent.
+/// A meter exactly at the threshold passes; unavailable providers cannot prove a pass.
+pub fn check_fail_under(snaps: &[ProviderSnapshot], fail_under: f64) -> CheckReport {
     let thr = fail_under.clamp(0.0, 100.0);
     let mut messages = Vec::new();
-    let mut ok = true;
+    let mut breached = false;
+    let mut unavailable = false;
+    let mut verified_quota = false;
     for snap in snaps {
+        let provider = if snap.label.is_empty() {
+            snap.id.as_str()
+        } else {
+            snap.label.as_str()
+        };
         if snap.status != SnapshotStatus::Ok {
+            unavailable = true;
+            messages.push(format!(
+                "{provider} ({}) quota unavailable: status {}{}",
+                snap.id,
+                snap.status.as_str(),
+                snap.error
+                    .as_deref()
+                    .map(|error| format!(": {error}"))
+                    .unwrap_or_default()
+            ));
             continue;
         }
+        if let Some(age) = snap.stale_age_secs {
+            unavailable = true;
+            messages.push(format!(
+                "{provider} ({}) quota unavailable: stale snapshot ({age}s old)",
+                snap.id
+            ));
+            continue;
+        }
+        let mut has_quota = false;
         for meter in &snap.meters {
-            let left = meter
-                .left_percent
-                .or_else(|| meter.percent.map(|p| 1.0 - p));
-            let Some(left) = left else { continue };
-            let left_pct = if left <= 1.0 { left * 100.0 } else { left };
-            if left_pct < thr {
-                ok = false;
+            let used_pct = meter
+                .percent
+                .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+                .map(|used| if used <= 1.0 { used * 100.0 } else { used });
+            let left_pct = used_pct.map(|used| 100.0 - used).or_else(|| {
+                meter
+                    .left_percent
+                    .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+                    .map(|left| if left <= 1.0 { left * 100.0 } else { left })
+            });
+            let Some(left_pct) = left_pct else {
+                continue;
+            };
+            has_quota = true;
+            let breached_threshold = used_pct
+                .map(|used| used > 100.0 - thr)
+                .unwrap_or(left_pct < thr);
+            if breached_threshold {
+                breached = true;
                 messages.push(format!(
-                    "{} · {} at {:.0}% remaining (fail-under {:.0}%)",
-                    snap.label, meter.title, left_pct, thr
+                    "{provider} · {} at {:.0}% remaining (fail-under {:.0}%)",
+                    meter.title, left_pct, thr
                 ));
             }
         }
+        if has_quota {
+            verified_quota = true;
+        } else {
+            unavailable = true;
+            messages.push(format!(
+                "{provider} ({}) quota unavailable: no usable percentage quota meters",
+                snap.id
+            ));
+        }
     }
-    (ok, messages)
+    if !verified_quota && messages.is_empty() {
+        messages.push(
+            "quota verification unavailable: no provider supplied a usable percentage quota".into(),
+        );
+    }
+    let outcome = if breached {
+        CheckOutcome::Breached
+    } else if unavailable || !verified_quota {
+        CheckOutcome::Unavailable
+    } else {
+        CheckOutcome::Passed
+    };
+    CheckReport { outcome, messages }
 }
 
 /// Exit non-zero when the period's total token cost reaches `budget_usd`
@@ -206,24 +275,88 @@ mod tests {
     }
 
     #[test]
-    fn fail_under_triggers() {
+    fn fail_under_breaches_below_threshold() {
         let mut snap = ProviderSnapshot::ok("codex", "Codex");
         snap.meters
             .push(meter_from_used_percent("w", "Weekly", 95.0, None));
-        let (ok, msgs) = check_fail_under(&[snap], 10.0);
-        assert!(!ok);
-        assert!(!msgs.is_empty());
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Breached);
+        assert!(
+            report
+                .messages
+                .iter()
+                .any(|message| message.contains("Codex"))
+        );
     }
 
     #[test]
-    fn fail_under_passes() {
+    fn fail_under_accepts_exact_threshold() {
         let mut snap = ProviderSnapshot::ok("codex", "Codex");
         snap.meters
-            .push(meter_from_used_percent("w", "Weekly", 50.0, None));
-        let (ok, _) = check_fail_under(&[snap], 10.0);
-        assert!(ok);
+            .push(meter_from_used_percent("w", "Weekly", 90.0, None));
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Passed);
+        assert!(report.messages.is_empty());
     }
 
+    #[test]
+    fn fail_under_still_breaches_near_but_below_threshold() {
+        let mut snap = ProviderSnapshot::ok("codex", "Codex");
+        snap.meters
+            .push(meter_from_used_percent("w", "Weekly", 90.01, None));
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Breached);
+    }
+
+    #[test]
+    fn fail_under_reports_auth_failure_as_unavailable() {
+        let snap = ProviderSnapshot::fail("codex", "Codex", SnapshotStatus::Auth, "not logged in");
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Unavailable);
+        assert!(report.messages[0].contains("Codex"));
+        assert!(report.messages[0].contains("not logged in"));
+    }
+
+    #[test]
+    fn fail_under_rejects_stale_snapshot() {
+        let mut snap = ProviderSnapshot::ok("codex", "Codex");
+        snap.stale_age_secs = Some(600);
+        snap.meters
+            .push(meter_from_used_percent("w", "Weekly", 50.0, None));
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Unavailable);
+        assert!(report.messages[0].contains("stale snapshot"));
+    }
+
+    #[test]
+    fn fail_under_reports_missing_quotas() {
+        let snap = ProviderSnapshot::ok("ledger-only", "Ledger only");
+        let report = check_fail_under(&[snap], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Unavailable);
+        assert!(report.messages[0].contains("no usable percentage quota meters"));
+        let empty_report = check_fail_under(&[], 10.0);
+        assert_eq!(empty_report.outcome, CheckOutcome::Unavailable);
+        assert!(!empty_report.messages.is_empty());
+    }
+
+    #[test]
+    fn fail_under_breach_precedes_unavailable_provider() {
+        let mut breached = ProviderSnapshot::ok("codex", "Codex");
+        breached
+            .meters
+            .push(meter_from_used_percent("w", "Weekly", 95.0, None));
+        let unavailable =
+            ProviderSnapshot::fail("claude", "Claude", SnapshotStatus::Error, "request failed");
+        let report = check_fail_under(&[breached, unavailable], 10.0);
+        assert_eq!(report.outcome, CheckOutcome::Breached);
+        assert_eq!(report.messages.len(), 2);
+        assert!(
+            report
+                .messages
+                .iter()
+                .any(|message| message.contains("Claude"))
+        );
+    }
     #[test]
     fn token_metrics_format() {
         let totals = vec![crate::tokens::TokenTotals {

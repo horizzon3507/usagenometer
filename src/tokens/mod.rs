@@ -366,6 +366,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> Result<usize> {
             let mut batch = match *provider {
                 "claude" => collect::claude::collect(&mut offsets),
                 "codex" => collect::codex::collect(&mut offsets),
+                "commandcode" => collect::commandcode::scan_with_store(Some(store)),
                 "grok" => collect::grok::scan_with_store(Some(store)),
                 "gemini" => collect::gemini::scan_with_store(Some(store)),
                 "cursor" => collect::cursor::scan(),
@@ -377,6 +378,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> Result<usize> {
                 "pi" => collect::pi::scan_with_store(Some(store)),
                 "kimi" => collect::kimi::scan_with_store(Some(store)),
                 "devin-local" => collect::devin_local::scan_with_store(Some(store)),
+                "fx" => collect::fx::scan_with_store(Some(store)),
                 _ => Vec::new(),
             };
             events.append(&mut batch);
