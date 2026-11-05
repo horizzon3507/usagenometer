@@ -34,7 +34,10 @@ use crate::tokens::{TokenEvent, TokenStore};
 const PROVIDER: &str = "gemini";
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for root in scan_roots() {
         let tmp = root.join("tmp");
@@ -47,18 +50,18 @@ pub fn scan() -> Vec<TokenEvent> {
             }
             match file.extension().and_then(|e| e.to_str()) {
                 Some("jsonl") => {
-                    let offset = resume_offset(store.as_ref(), &file);
+                    let offset = resume_offset(store, &file);
                     let (mut found, next) = parse_jsonl_records(&file, offset);
                     events.append(&mut found);
-                    util::mark_scanned(store.as_ref(), &file, next);
+                    util::mark_scanned(store, &file, next);
                 }
                 _ => {
-                    if !util::whole_file_changed(store.as_ref(), &file) {
+                    if !util::whole_file_changed(store, &file) {
                         continue;
                     }
                     events.extend(parse_session_file(&file));
                     if let Ok(meta) = fs::metadata(&file) {
-                        util::mark_scanned(store.as_ref(), &file, meta.len());
+                        util::mark_scanned(store, &file, meta.len());
                     }
                 }
             }

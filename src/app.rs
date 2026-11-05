@@ -450,7 +450,7 @@ fn cmd_check(
             .or_else(|| settings.config.budget_window())
             .unwrap_or_else(|| "day".to_string());
         let provider_ids: Vec<&str> = settings.providers.iter().map(|p| p.id()).collect();
-        let scanned = tokens::scan_all(&provider_ids);
+        let scanned = tokens::scan_all(&provider_ids)?;
         let store = tokens::TokenStore::open()?;
         let events =
             events_for_providers(&store, Some(budget_window_start(&window)), &provider_ids)?;
@@ -639,7 +639,7 @@ fn cmd_tokens(
     } else {
         selected.clone()
     };
-    let scanned = tokens::scan_all(&scan_ids);
+    let scanned = tokens::scan_all(&scan_ids)?;
     let store = TokenStore::open()?;
     let local = tokens::local_offset();
 
@@ -977,20 +977,27 @@ fn emit_tokens_json(
         }
         out_rows.push(obj);
     }
-    let (total_cost, unpriced) = if cost {
-        pricing::total_cost_usd(events, &settings.config.pricing)
-    } else {
-        (0.0, 0)
-    };
+    let mut total_tokens = tokens::Totals::default();
+    for event in events {
+        total_tokens.add(event);
+    }
+    let mut totals = serde_json::json!({
+        "input_tokens": total_tokens.input,
+        "output_tokens": total_tokens.output,
+        "cache_read_tokens": total_tokens.cache_read,
+        "cache_write_tokens": total_tokens.cache_write,
+        "total_tokens": total_tokens.total(),
+    });
+    if cost {
+        let (total_cost, unpriced) = pricing::total_cost_usd(events, &settings.config.pricing);
+        totals["cost_usd"] = serde_json::json!(total_cost);
+        totals["unpriced_events"] = serde_json::json!(unpriced);
+    }
     let doc = serde_json::json!({
         "scanned_new_events": scanned,
-        "period": format!("{period:?}").to_lowercase(),
+        "period": period.id(),
         "groups": out_rows,
-        "totals": if cost {
-            serde_json::json!({"cost_usd": total_cost, "unpriced_events": unpriced})
-        } else {
-            serde_json::Value::Null
-        },
+        "totals": totals,
     });
     if pretty {
         serde_json::to_writer_pretty(io::stdout().lock(), &doc)?;

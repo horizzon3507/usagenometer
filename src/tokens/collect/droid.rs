@@ -51,13 +51,16 @@ const RECORD_ARRAYS: &[&str] = &[
 ];
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for (root, hint) in roots_with_hints() {
         if !root.is_dir() {
             continue;
         }
-        events.extend(scan_root(&root, hint.as_deref(), store.as_ref()));
+        events.extend(scan_root(&root, hint.as_deref(), store));
     }
     events
 }

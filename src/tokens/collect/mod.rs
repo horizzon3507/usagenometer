@@ -91,11 +91,11 @@ pub struct ScanOffsets {
 }
 
 impl ScanOffsets {
-    pub(crate) fn load(store: &TokenStore) -> Self {
-        Self {
-            saved: store.scan_offsets().unwrap_or_default(),
+    pub(crate) fn load(store: &TokenStore) -> anyhow::Result<Self> {
+        Ok(Self {
+            saved: store.scan_offsets()?,
             pending: HashMap::new(),
-        }
+        })
     }
 
     /// Offsets that never persist — for tests and ad-hoc full scans.
@@ -120,10 +120,11 @@ impl ScanOffsets {
             .insert(path.to_string_lossy().into_owned(), offset);
     }
 
-    pub(crate) fn flush(self, store: &TokenStore) {
+    pub(crate) fn flush(self, store: &TokenStore) -> anyhow::Result<()> {
         for (path, offset) in &self.pending {
-            let _ = store.save_scan_offset(path, *offset);
+            store.save_scan_offset(path, *offset)?;
         }
+        Ok(())
     }
 }
 

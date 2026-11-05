@@ -25,35 +25,38 @@ use crate::tokens::{TokenEvent, TokenStore};
 const PROVIDER: &str = "antigravity";
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for root in scan_roots() {
         if !root.is_dir() {
             continue;
         }
         for db in collect_files(std::slice::from_ref(&root), &["vscdb", "vscdb.backup"]) {
-            if util::whole_file_changed(store.as_ref(), &db) {
+            if util::whole_file_changed(store, &db) {
                 events.extend(cursor::scan_db_as(PROVIDER, &db));
                 if let Ok(meta) = fs::metadata(&db) {
-                    util::mark_scanned(store.as_ref(), &db, meta.len());
+                    util::mark_scanned(store, &db, meta.len());
                 }
             }
         }
         for file in collect_files(std::slice::from_ref(&root), &["jsonl", "ndjson"]) {
-            let offset = resume_offset(store.as_ref(), &file);
+            let offset = resume_offset(store, &file);
             let fallback_ts = file_mtime(&file);
             let (mut found, next) =
                 read_jsonl_events(&file, offset, |v| record_event(v, fallback_ts));
             events.append(&mut found);
-            util::mark_scanned(store.as_ref(), &file, next);
+            util::mark_scanned(store, &file, next);
         }
         for file in collect_files(std::slice::from_ref(&root), &["json"]) {
-            if !util::whole_file_changed(store.as_ref(), &file) {
+            if !util::whole_file_changed(store, &file) {
                 continue;
             }
             events.extend(json_file_events(&file));
             if let Ok(meta) = fs::metadata(&file) {
-                util::mark_scanned(store.as_ref(), &file, meta.len());
+                util::mark_scanned(store, &file, meta.len());
             }
         }
     }

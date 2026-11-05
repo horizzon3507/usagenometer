@@ -50,7 +50,10 @@ use crate::tokens::{TokenEvent, TokenStore};
 const PROVIDER: &str = "omp";
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for root in scan_roots() {
         let sessions = root.join("sessions");
@@ -58,10 +61,10 @@ pub fn scan() -> Vec<TokenEvent> {
             continue;
         }
         for file in collect_files(std::slice::from_ref(&sessions), &["jsonl"]) {
-            let offset = resume_offset(store.as_ref(), &file);
+            let offset = resume_offset(store, &file);
             let (mut found, next) = parse_session(&sessions, &file, offset);
             events.append(&mut found);
-            util::mark_scanned(store.as_ref(), &file, next);
+            util::mark_scanned(store, &file, next);
         }
     }
     events

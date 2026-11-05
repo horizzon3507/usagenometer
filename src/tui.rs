@@ -126,10 +126,14 @@ fn run_app(
                     }
                     Tab::Tokens => {
                         let ids = providers::resolve_providers(&app.settings.providers);
-                        let added = crate::tokens::scan_all(&ids);
-                        app.tokens = load_token_view();
-                        app.clamp_token_selection();
-                        app.message = format!("rescan · {added} new events");
+                        match crate::tokens::scan_all(&ids) {
+                            Ok(added) => {
+                                app.tokens = load_token_view();
+                                app.clamp_token_selection();
+                                app.message = format!("rescan · {added} new events");
+                            }
+                            Err(error) => app.message = format!("rescan failed: {error}"),
+                        }
                     }
                 },
                 KeyCode::Down | KeyCode::Char('j') => match app.tab {

@@ -79,15 +79,18 @@ pub fn scan_roots() -> Vec<PathBuf> {
 }
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for (root, flavor) in roots() {
         if !root.join("sessions").is_dir() {
             continue;
         }
         match flavor {
-            Flavor::Cli => events.extend(scan_cli_root(&root, store.as_ref())),
-            Flavor::Code => events.extend(scan_code_root(&root, store.as_ref())),
+            Flavor::Cli => events.extend(scan_cli_root(&root, store)),
+            Flavor::Code => events.extend(scan_code_root(&root, store)),
         }
     }
     events

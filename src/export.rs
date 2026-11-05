@@ -62,7 +62,7 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
     // Token ledger: best-effort rescan so an exporter call stays current,
     // then emit whatever the store holds. Scans are idempotent and
     // failure-tolerant; a missing/unopenable store emits nothing.
-    let _ = crate::tokens::scan_all(crate::tokens::collect::known_providers());
+    crate::tokens::scan_all(crate::tokens::collect::known_providers())?;
     emit_token_metrics(&mut out)?;
     Ok(())
 }
