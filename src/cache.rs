@@ -44,6 +44,14 @@ impl SnapshotCache {
         Ok(())
     }
 
+    pub fn invalidate(&self, provider_id: &str) -> Result<()> {
+        match fs::remove_file(self.path_for(provider_id)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("invalidate rejected authentication snapshot"),
+        }
+    }
+
     /// Load a cached snapshot if still within TTL for “fresh”, or any age for stale fallback.
     /// Returns `(snapshot, age_secs)`.
     pub fn load(&self, provider_id: &str) -> Option<(ProviderSnapshot, u64)> {

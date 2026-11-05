@@ -1,15 +1,23 @@
-//! Devin Cloud — ACU consumption via the Devin REST API (api.devin.ai).
+//! Devin Cloud — consumption and quota meters.
 //!
-//! Auth: `DEVIN_API_KEY` (service-user API key) or the Devin CLI credential
-//! at `$XDG_DATA_HOME/devin/credentials.toml` / `~/.local/share/devin/`
-//! (`%APPDATA%\devin` on Windows), written by `devin auth login`.
+//! Two credential paths:
+//!
+//! - **API key** (`DEVIN_API_KEY`, or a `cog_`/`apk_` value inside the Devin
+//!   CLI credential file): the REST API at api.devin.ai. ACU consumption from
+//!   the org consumption API (`GET /v3/organizations/{org}/consumption/daily`,
+//!   org ids + cycle caps from `GET /v2/enterprise/organizations`), with
+//!   `GET /v2/enterprise/sessions` (`acus_consumed` per session, bucketed by
+//!   creation time) as fallback.
+//! - **Devin CLI session** (`devin auth login` — the `devin-…` token inside
+//!   `credentials.toml` targets the Connect API at `api_server_url`, normally
+//!   server.codeium.com): daily/weekly quota percents, prompt credits and
+//!   overage from `SeatManagementService/GetUserStatus`.
+//!
+//! The credential file lives at `$XDG_DATA_HOME/devin/credentials.toml` /
+//! `~/.local/share/devin/` (`%APPDATA%\devin` on Windows).
 //!
 //! Devin bills in ACUs (Agent Compute Units), not tokens — the ledger stays
-//! empty for this provider by design. Meters come from the org consumption
-//! API (`GET /v3/organizations/{org}/consumption/daily`, org ids + cycle caps
-//! from `GET /v2/enterprise/organizations`), with `GET /v2/enterprise/sessions`
-//! (`acus_consumed` per session, bucketed by creation time) as fallback when
-//! org discovery or consumption is unavailable.
+//! empty for this provider by design.
 
 use serde_json::Value;
 use std::fs;
@@ -19,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::http::{HttpClient, HttpError};
 use crate::providers::types::{
     ProviderSnapshot, SnapshotStatus, UsageMeter, coerce_number, coerce_unix_seconds, create_meter,
+    meter_from_remaining_fraction,
 };
 
 const API_BASE: &str = "https://api.devin.ai";
@@ -43,10 +52,17 @@ struct FetchErr {
 }
 
 fn fetch_inner(client: &HttpClient) -> Result<ProviderSnapshot, FetchErr> {
-    let api_key = load_api_key().map_err(|e| FetchErr {
+    let cred = load_credential().map_err(|e| FetchErr {
         status: SnapshotStatus::Auth,
         message: e,
     })?;
+
+    let api_key = match cred {
+        Credential::ApiKey(k) => k,
+        Credential::CliSession { token, server } => {
+            return cli_status_snapshot(client, &token, &server);
+        }
+    };
 
     let bearer = format!("Bearer {api_key}");
     let headers = [
@@ -112,16 +128,23 @@ fn map_http(e: HttpError) -> FetchErr {
 
 // ---------- auth ----------
 
-fn load_api_key() -> Result<String, String> {
+enum Credential {
+    /// `cog_`/`apk_` (or `DEVIN_API_KEY`) — REST API at api.devin.ai.
+    ApiKey(String),
+    /// `devin auth login` session token — Connect API at `server`.
+    CliSession { token: String, server: String },
+}
+
+fn load_credential() -> Result<Credential, String> {
     if let Ok(key) = std::env::var("DEVIN_API_KEY") {
         let key = key.trim();
         if !key.is_empty() {
-            return Ok(key.to_string());
+            return Ok(Credential::ApiKey(key.to_string()));
         }
     }
     let path = credentials_path();
     let raw = fs::read_to_string(&path).map_err(|_| {
-        "Devin API key not found — set DEVIN_API_KEY or run devin auth login.".to_string()
+        "Devin credentials not found — set DEVIN_API_KEY or run devin auth login.".to_string()
     })?;
     let parsed: toml::Value = toml::from_str(&raw).map_err(|_| {
         format!(
@@ -129,7 +152,7 @@ fn load_api_key() -> Result<String, String> {
             path.display()
         )
     })?;
-    find_token(&parsed).ok_or_else(|| {
+    file_credential(&parsed).ok_or_else(|| {
         format!(
             "Devin credentials at {} carry no API token.",
             path.display()
@@ -137,20 +160,61 @@ fn load_api_key() -> Result<String, String> {
     })
 }
 
-/// `credentials.toml` shape is not publicly documented — accept any string
-/// value whose key mentions a token/api key, at any nesting level.
-fn find_token(value: &toml::Value) -> Option<String> {
-    let table = value.as_table()?;
+/// `credentials.toml` shape is not publicly documented — collect every
+/// non-empty string value whose key mentions a token/api key, at any depth.
+/// Real API keys (`cog_`/`apk_`) win over the `devin-…` CLI session token;
+/// anything else falls back to the API path (env-var-like behavior).
+fn file_credential(parsed: &toml::Value) -> Option<Credential> {
+    let mut secrets = Vec::new();
+    collect_secrets(parsed, &mut secrets);
+
+    for s in &secrets {
+        if s.starts_with("cog_") || s.starts_with("apk_") {
+            return Some(Credential::ApiKey(s.clone()));
+        }
+    }
+    for s in &secrets {
+        if s.starts_with("devin-") {
+            return Some(Credential::CliSession {
+                token: s.clone(),
+                server: find_string(parsed, "api_server_url")
+                    .unwrap_or_else(|| "https://server.codeium.com".into()),
+            });
+        }
+    }
+    secrets.into_iter().next().map(Credential::ApiKey)
+}
+
+fn collect_secrets(value: &toml::Value, out: &mut Vec<String>) {
+    let Some(table) = value.as_table() else {
+        return;
+    };
     for (key, item) in table {
         let key = key.to_ascii_lowercase();
         if (key.contains("token") || key.contains("api_key"))
             && let Some(s) = item.as_str()
             && !s.trim().is_empty()
         {
+            out.push(s.trim().to_string());
+        }
+    }
+    for item in table.values() {
+        collect_secrets(item, out);
+    }
+}
+
+/// First non-empty string value at any depth whose key ends with `suffix`.
+fn find_string(value: &toml::Value, suffix: &str) -> Option<String> {
+    let table = value.as_table()?;
+    for (key, item) in table {
+        if key.to_ascii_lowercase().ends_with(suffix)
+            && let Some(s) = item.as_str()
+            && !s.trim().is_empty()
+        {
             return Some(s.trim().to_string());
         }
     }
-    table.values().find_map(find_token)
+    table.values().find_map(|v| find_string(v, suffix))
 }
 
 pub(crate) fn credentials_path() -> PathBuf {
@@ -460,6 +524,156 @@ fn sessions_snapshot(
     })
 }
 
+// ---------- CLI session path (Connect / codeium) ----------
+
+/// Quota meters for `devin auth login` users: the session token can't reach
+/// api.devin.ai, but `SeatManagementService/GetUserStatus` on the Connect
+/// server returns plan info plus daily/weekly quota percents.
+fn cli_status_snapshot(
+    client: &HttpClient,
+    token: &str,
+    server: &str,
+) -> Result<ProviderSnapshot, FetchErr> {
+    let url = format!(
+        "{}/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+        server.trim_end_matches('/')
+    );
+    let bearer = format!("Bearer {token}");
+    let headers = [
+        ("Accept", "application/json"),
+        ("Authorization", bearer.as_str()),
+        ("Connect-Protocol-Version", "1"),
+    ];
+    let body = serde_json::json!({
+        "metadata": {
+            "apiKey": token,
+            "ideName": "devin-cli",
+            "ideVersion": "3000.11.3",
+            "extensionName": "devin",
+            "extensionVersion": "3000.11.3",
+            "locale": "en-US",
+        }
+    });
+    let payload: Value = client.post_json(&url, &body, &headers).map_err(|e| {
+        if e.is_auth_error() {
+            map_http(e)
+        } else {
+            FetchErr {
+                status: SnapshotStatus::Error,
+                message: e.to_string(),
+            }
+        }
+    })?;
+    Ok(cli_snapshot_from_status(&payload))
+}
+
+fn cli_snapshot_from_status(payload: &Value) -> ProviderSnapshot {
+    let status = payload.get("userStatus").unwrap_or(payload);
+    let plan_status = status.get("planStatus").cloned().unwrap_or(Value::Null);
+
+    let mut meters = Vec::new();
+
+    // `hideDailyQuota` marks plans without a daily window (e.g. Max).
+    let hide_daily = plan_status
+        .pointer("/planInfo/hideDailyQuota")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !hide_daily
+        && let Some(left) = plan_status
+            .get("dailyQuotaRemainingPercent")
+            .and_then(coerce_number)
+    {
+        meters.push(meter_from_remaining_fraction(
+            "daily_quota",
+            "Daily quota",
+            left / 100.0,
+            plan_status
+                .get("dailyQuotaResetAtUnix")
+                .and_then(coerce_unix_seconds),
+            Some(DAY_SECS),
+        ));
+    }
+    if let Some(left) = plan_status
+        .get("weeklyQuotaRemainingPercent")
+        .and_then(coerce_number)
+    {
+        meters.push(meter_from_remaining_fraction(
+            "weekly_quota",
+            "Weekly quota",
+            left / 100.0,
+            plan_status
+                .get("weeklyQuotaResetAtUnix")
+                .and_then(coerce_unix_seconds),
+            Some(7.0 * DAY_SECS),
+        ));
+    }
+    // -1 marks an unlimited credit pool; negative = exhausted.
+    if let Some(credits) = plan_status
+        .get("availablePromptCredits")
+        .and_then(coerce_number)
+        && credits > 0.0
+    {
+        meters.push(create_meter(
+            "prompt_credits",
+            "Prompt credits",
+            None,
+            None,
+            None,
+            Some(credits),
+            None,
+            "credits",
+            None,
+            None,
+            Some(CYCLE_WINDOW_DAYS as f64 * DAY_SECS),
+        ));
+    }
+    // Micros of overage balance; negative = spent beyond the plan quota.
+    if let Some(micros) = plan_status
+        .get("overageBalanceMicros")
+        .and_then(coerce_number)
+        && micros < 0.0
+    {
+        meters.push(create_meter(
+            "overage",
+            "Overage spend",
+            None,
+            None,
+            Some(micros.abs() / 1_000_000.0),
+            None,
+            None,
+            "usd",
+            None,
+            None,
+            None,
+        ));
+    }
+
+    let plan = plan_status
+        .pointer("/planInfo/planName")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let account = status
+        .pointer("/planStatus/planInfo/devinInfo/accountDisplayName")
+        .and_then(|v| v.as_str())
+        .or_else(|| status.get("name").and_then(|v| v.as_str()))
+        .map(str::to_string);
+
+    ProviderSnapshot {
+        id: ID.into(),
+        label: LABEL.into(),
+        status: SnapshotStatus::Ok,
+        error: if meters.is_empty() {
+            Some("Devin session connected, but no quota fields were returned.".into())
+        } else {
+            None
+        },
+        account,
+        plan,
+        meters,
+        stale_age_secs: None,
+    }
+}
+
 fn now_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -535,13 +749,110 @@ mod tests {
     }
 
     #[test]
-    fn find_token_accepts_common_keys() {
+    fn file_credential_prefers_api_key() {
         let v: toml::Value = toml::from_str("api_token = \"cog_abc123\"").unwrap();
-        assert_eq!(find_token(&v).as_deref(), Some("cog_abc123"));
-        let nested: toml::Value = toml::from_str("[auth]\ntoken = \"cog_xyz\"").unwrap();
-        assert_eq!(find_token(&nested).as_deref(), Some("cog_xyz"));
+        assert!(matches!(
+            file_credential(&v),
+            Some(Credential::ApiKey(k)) if k == "cog_abc123"
+        ));
+        let nested: toml::Value = toml::from_str("[auth]\ntoken = \"apk_xyz\"").unwrap();
+        assert!(matches!(
+            file_credential(&nested),
+            Some(Credential::ApiKey(k)) if k == "apk_xyz"
+        ));
         let empty: toml::Value = toml::from_str("foo = \"bar\"").unwrap();
-        assert_eq!(find_token(&empty), None);
+        assert!(file_credential(&empty).is_none());
+    }
+
+    #[test]
+    fn file_credential_maps_devin_session_to_connect() {
+        let v: toml::Value = toml::from_str(
+            "windsurf_api_key = \"devin-session-x\"\napi_server_url = \"https://server.codeium.com\"",
+        )
+        .unwrap();
+        let Some(Credential::CliSession { token, server }) = file_credential(&v) else {
+            panic!("expected CLI session credential");
+        };
+        assert_eq!(token, "devin-session-x");
+        assert_eq!(server, "https://server.codeium.com");
+
+        // A `cog_` key anywhere in the file beats the session token.
+        let both: toml::Value =
+            toml::from_str("windsurf_api_key = \"devin-session-x\"\napi_key = \"cog_pref\"")
+                .unwrap();
+        assert!(matches!(
+            file_credential(&both),
+            Some(Credential::ApiKey(k)) if k == "cog_pref"
+        ));
+    }
+
+    #[test]
+    fn cli_status_maps_quota_meters() {
+        let payload = serde_json::json!({
+            "userStatus": {
+                "name": "Gabriel Rodrigues",
+                "planStatus": {
+                    "planInfo": {
+                        "planName": "Max",
+                        "hideDailyQuota": true,
+                        "devinInfo": {"accountDisplayName": "Firefly Labs"}
+                    },
+                    "dailyQuotaRemainingPercent": 100,
+                    "weeklyQuotaRemainingPercent": 51,
+                    "availablePromptCredits": -1,
+                    "overageBalanceMicros": "-239976",
+                    "weeklyQuotaResetAtUnix": "1791705600"
+                }
+            }
+        });
+        let snap = cli_snapshot_from_status(&payload);
+        assert_eq!(snap.plan.as_deref(), Some("Max"));
+        assert_eq!(snap.account.as_deref(), Some("Firefly Labs"));
+        assert_eq!(snap.status, SnapshotStatus::Ok);
+
+        // Daily meter suppressed by hideDailyQuota; unlimited credits skipped.
+        let weekly = snap
+            .meters
+            .iter()
+            .find(|m| m.id == "weekly_quota")
+            .expect("weekly meter");
+        assert!((weekly.left_percent.unwrap() - 0.51).abs() < 1e-9);
+        assert_eq!(weekly.reset_at, Some(1_791_705_600.0));
+        assert!(snap.meters.iter().all(|m| m.id != "daily_quota"));
+        assert!(snap.meters.iter().all(|m| m.id != "prompt_credits"));
+
+        let overage = snap
+            .meters
+            .iter()
+            .find(|m| m.id == "overage")
+            .expect("overage meter");
+        assert!((overage.used.unwrap() - 0.239976).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cli_status_shows_daily_quota_when_visible() {
+        let payload = serde_json::json!({
+            "userStatus": {
+                "planStatus": {
+                    "planInfo": {"planName": "Pro"},
+                    "dailyQuotaRemainingPercent": 25.0,
+                    "availablePromptCredits": 30
+                }
+            }
+        });
+        let snap = cli_snapshot_from_status(&payload);
+        let daily = snap
+            .meters
+            .iter()
+            .find(|m| m.id == "daily_quota")
+            .expect("daily meter");
+        assert!((daily.left_percent.unwrap() - 0.25).abs() < 1e-9);
+        let credits = snap
+            .meters
+            .iter()
+            .find(|m| m.id == "prompt_credits")
+            .expect("credits meter");
+        assert_eq!(credits.left, Some(30.0));
     }
 
     #[test]
