@@ -96,7 +96,7 @@ input/output/cache tokens. For a compact prompt segment:
 ```bash
 # grok 12k · gemini 4k · cursor 31k
 usg tokens --json 2>/dev/null \
-  | jq -r '.[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
+  | jq -r '.groups[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
   | paste -sd' · '
 ```
 
@@ -104,7 +104,7 @@ Drop the segment when the ledger is empty:
 
 ```bash
 seg="$(usg tokens --json 2>/dev/null \
-  | jq -r '.[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
+  | jq -r '.groups[] | "\(.provider) \((.input_tokens + .output_tokens) / 1000 | floor)k"' \
   | paste -sd' · ')"
 PS1='${seg:+$seg }'"$PS1"
 ```
@@ -113,5 +113,5 @@ PS1='${seg:+$seg }'"$PS1"
 
 - `usg -c -q` reads a fresh local cache first. Keep `cache_ttl` at 60–300 seconds for a fast prompt; use `cache_ttl = 0` when you explicitly need a live fetch every time.
 - Filter providers: `usg -c -q -p codex -p cursor`.
-- `usg tokens --json` reports recorded ledger events; scanning is incremental, so it is cheap enough for a prompt. Providers without local token records simply have no entries.
+- `usg tokens --json` reports eligible installed/authenticated agents by default. Use `usg tokens --all --json` to include historical records from logged-out or uninstalled agents. Scanning remains incremental.
 - For bars (waybar / polybar), use the same command as an `exec` / `custom` module with a longer interval (60s+).

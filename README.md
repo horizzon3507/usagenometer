@@ -1,7 +1,7 @@
 # ◈ usagenometer
 
 **usagenometer** — AI usage meters in the terminal.  
-Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity, Claude, Grok) and prints compact black & white quotas — no secrets stored by the tool.
+Short alias: **`usg`**. Reads local auth (Codex CLI, Cursor, Antigravity, Claude, Grok, GLM, Kimi, fx, Command Code, Devin) and prints compact black & white quotas using provider-native credentials. Command Code also contributes token usage from its local transcripts.
 
 ```
 ◈  usagenometer
@@ -27,8 +27,14 @@ yay -S usagenometer
 paru -S usagenometer
 
 # from source
-cargo install --path . --force
+cargo install --path . --locked --force
 # binaries: usagenometer · usg
+```
+
+If `command -v usg` points to `~/.local/bin/usg`, update that installation instead of creating a shadowed copy in `~/.cargo/bin`:
+
+```bash
+cargo install --path . --locked --force --root "$HOME/.local"
 ```
 
 | Command | Description |
@@ -56,6 +62,11 @@ usg check --budget-usd 5 --period day   # exit 2 when today's spend >= $5
 usg tokens                  # token ledger totals for today
 usg tokens --period week --by model --cost
 usg test
+usg providers                  # installed agents with locally usable credentials
+usg providers --include-unconfigured  # also show installed agents needing credentials
+usg providers --only-unconfigured --verbose  # setup commands and credential problems
+usg providers --all             # every agent, including agents not installed
+usg tokens --all                # include historical usage from unavailable agents
 usg doctor                  # auth paths / expiry (no secrets)
 usg explain [provider]
 usg history --runway          # local burn rate + exhaustion estimate + reset
@@ -76,7 +87,10 @@ usg --help
 
 | Flag | Meaning |
 |------|---------|
-| `-p` / `--provider` | Limit to provider(s); repeatable (`codex` `cursor` `antigravity` `claude` `grok` `devin-cloud`) |
+| `-p` / `--provider` | Limit to provider(s); repeatable. Includes `opencode`, `opencode-go`, `opencode-zen`, `omp`, `commandcode`, `droid`, `pi`, `gemini` and `devin-local`. On `tokens` / `check --budget-usd` it filters ledger agents; the config `providers` list does not limit the ledger |
+| `--include-unconfigured` | Include installed agents whose credentials need attention |
+| `--only-unconfigured` | Show only installed agents whose credentials need attention; `providers --verbose` includes setup commands |
+| `--all` | Include agents not installed and agents without usable credentials; on `tokens`, include their recorded history |
 | `--display left\|used` | Emphasize remaining (default) or used |
 | `-c` / `--compact` | One-liner: `Codex 42% · Cursor 74%` |
 | `--privacy` | Redact account emails / identifiers |
@@ -93,12 +107,12 @@ usg --help
 |---------|-------------|
 | `status` (`st`) | Show meters (default). Supports `--compact`. |
 | `watch` (`w`) | Refresh on an interval. `--diff` shows only changes. |
-| `check` | Exit `2` if any meter **remaining** % is below `--fail-under` (default 10). `--budget-usd N --period day\|week\|month` also gates token spend (both must pass). |
+| `check` | Exit `0` only when quota verification passes; `1` when unavailable (auth/error, stale fallback, or no percentage quota); `2` when remaining % is below `--fail-under` (default 10) or a token budget is reached. |
 | `tokens` (`tok`) | Token ledger totals: `--period today\|week\|month\|all`, `--by model\|project\|session\|day`, `--since`, `--cost` adds a USD column + total. |
 | `test` (`t`) | Auth + API connectivity |
-| `providers` (`ls`) | List providers |
+| `providers` (`ls`) | Installed, locally authenticated agents; `--verbose` adds credential details and capabilities; `--json` includes installation, credential state and setup command |
 | `json` (`j`) | Dump snapshots as JSON |
-| `doctor` | Diagnose auth files, token expiry, Antigravity OAuth env |
+| `doctor` | Diagnose credential sources, token expiry and refresh availability without network requests |
 | `explain` | Inline docs for plan/meter meanings |
 | `history` | Local SQLite snapshots (`--runway` for burn/ETA/reset; `--spark` for sparklines) |
 | `tokens` | Local token ledger — scans agent session logs (`--period today\|week\|month\|all`, `--by model\|project\|session\|day`, `--since`, `--json`) |
@@ -107,12 +121,18 @@ usg --help
 | `completions` | Generate bash/zsh/fish/… completions to stdout |
 | `version` | Print version |
 
+Default status, JSON and token displays exclude agents without a detected executable/native app or usable local credentials. Expired credentials are eligible only where the integration can refresh them; unknown or unreadable native stores stay hidden. Old session files do not prove installation. The remote Devin Cloud integration needs credentials but no local application.
+
+`providers` inspects native credentials locally, without API calls or refresh, and labels JSON with `credential_validation: "local"`. This cannot prove server acceptance or subscription entitlement. Status/JSON/TUI also hide explicit API authentication rejections in default mode; transient API errors remain visible. `usg test PROVIDER` checks the live API even when that provider is hidden. `doctor` remains an unfiltered diagnostic, and `check` keeps failures for providers explicitly selected by `-p` or config instead of silently approving the remaining providers.
+
+The three selection flags are mutually exclusive and override the config provider list; an explicit `-p` still narrows the selection. `providers` always inspects the whole catalog unless you pass `-p`. Token displays and the TUI Tokens tab consider all eligible ledger agents independently of the config quota list. Budget checks continue counting historical spend even after an agent is removed or logged out; use `usg tokens --all --cost` to inspect that spend.
+
 ### Config
 
 File: `~/.config/usagenometer/config.toml` (XDG). CLI flags override config.
 
 ```toml
-providers = []                 # empty = all
+providers = []                 # empty = eligible quota/status providers
 provider_order = ["codex", "cursor", "claude", "antigravity", "grok"]
 watch_interval = 60
 display = "left"               # or "used"
@@ -150,9 +170,10 @@ Compact output for prompts and bars: `usg -c -q`. Ready snippets for Starship, o
 
 ### Scripting & ops
 
-- `usg check --fail-under 10` — **fail when remaining &lt; 10%** (used &gt; 90%). Exit `2` on failure.
+- `usg check --fail-under 10`: exit `2` when remaining &lt; 10% (used &gt; 90%), or `1` when a selected provider's quota cannot be verified. Fresh TTL cache is accepted; stale fallback is not. A confirmed quota or budget breach takes precedence over unavailable data. Diagnostics go to stderr.
 - `usg check --budget-usd 5 --period day` — **fail when this day's token cost ≥ $5**. Exit `2`; composes with `--fail-under`. Windows are UTC calendar day / ISO week (Mon) / calendar month.
 - `usg tokens --cost --json` — token totals with a `cost_usd` field per row and in `totals`; events on models with no known price are counted in `unpriced_events` and excluded from cost.
+- `usg tokens --json`: `groups` contains per-provider rows, with any requested `--by` dimensions; `totals` always contains input, output, cache-read, cache-write and combined token counts. `--cost` adds pricing fields without replacing token totals.
 - `usg --format prometheus` — Prometheus text exposition (`usagenometer_used_ratio`, `usagenometer_left_ratio`, `usagenometer_up`).
 - `usg json` + `jq` recipes, CI gates, Prometheus scrape, systemd user timers → **[docs/ops.md](docs/ops.md)**.
 - Example units: [`packaging/systemd/`](packaging/systemd/).
@@ -171,23 +192,34 @@ usg completions fish > ~/.config/fish/completions/usg.fish
 | Provider | Source | What you see | Token ledger |
 |----------|--------|----------------|--------------|
 | **Codex** | `~/.codex/auth.json` + ChatGPT WHAM usage API | 5h / weekly limits | — |
-| **Cursor** | Cursor `state.vscdb` + `cursor.com/api/usage-summary` | Auto + Composer, API | `state.vscdb` chat bubbles |
-| **Antigravity** | secret store / `~/.gemini` + Cloud Code quota API | Gemini + Claude/GPT pools | `~/.antigravity` + `~/.gemini` sessions |
+| **Cursor** | CLI `~/.config/cursor/auth.json`, then app `state.vscdb` → `cursor.com/api/usage-summary` | Auto + Composer, API | `state.vscdb` chat bubbles |
+| **Antigravity** | agy keyring, then Antigravity app OAuth state, then `~/.gemini/oauth_creds.json` → Cloud Code quota API | Gemini + Claude/GPT pools | `~/.antigravity` + `~/.gemini` sessions |
 | **Claude** | `~/.claude/.credentials.json` (or keyring) → Anthropic OAuth usage; else Antigravity `3p-*` | 5h / weekly (+ model buckets) | — |
-| **Grok** | `~/.grok/auth.json` → cli-chat-proxy billing | Weekly credits / products / monthly | `~/.grok` sessions + logs |
+| **Grok** | `$GROK_HOME/auth.json` or `~/.grok/auth.json` x.ai OIDC session → cli-chat-proxy billing | Weekly credits / products / monthly | `~/.grok` sessions + logs |
 | **OpenCode** | — (tokens only) | — | `~/.local/share/opencode` db + `storage/` sessions |
+| **OpenCode Go** | Native `opencode-go` key in `opencode.db` or legacy `auth.json` → `/zen/go/v1/usage` | Rolling / weekly / monthly quota windows | Use the shared `opencode` ledger |
+| **OpenCode Zen** | Native Console OAuth session in `opencode.db` → `/console/api/billing/status` | Credit balance in USD; available credit for invoiced accounts | Use the shared `opencode` ledger |
 | **GLM** | `ZAI_API_KEY` or `env.ANTHROPIC_AUTH_TOKEN` (z.ai `ANTHROPIC_BASE_URL`) → z.ai quota API | 5h / weekly / monthly MCP | `~/.claude/projects` GLM-model records |
-| **OMP** | — | — | `~/.omp/agent` sessions |
+| **CommandCode** | `~/.commandcode/auth.json` (`commandcode login`) or `COMMANDCODE_API_KEY` → `api.commandcode.ai` alpha billing endpoints | Credits balance (USD) + 5h / weekly spend windows | `~/.commandcode/projects/*/*.jsonl` assistant usage |
+| **OMP** | — (ledger only; `-p omp` points at `usg tokens`) | — | `~/.omp/agent` sessions |
 | **Droid** | — | tokens only | `~/.factory/sessions` + `<project>/.factory/sessions` |
 | **Pi** | — (ledger only) | — | `~/.pi/agent` sessions |
 | **Kimi** | `~/.kimi*/credentials/` OAuth → `api.kimi.com/coding/v1/usages` | 5h / weekly / monthly + booster wallet | `~/.kimi` + `~/.kimi-code` wire.jsonl |
 | **Devin (local)** | ledger only (no quota meter) | — | Devin CLI `devin/cli/sessions.db` + `transcripts/*.json` |
-| **Devin Cloud** | `DEVIN_API_KEY` or `~/.local/share/devin/credentials.toml` → api.devin.ai | ACU today / 7d / cycle vs org cap | — (ACUs, not tokens) |
+| **Devin Cloud** | `DEVIN_API_KEY` → api.devin.ai; or `devin auth login` session → Connect API | ACU today / 7d / cycle vs org cap; CLI session: daily / weekly quota %, credits, overage | — (ACUs, not tokens) |
+| **fx** | `VERCEL_OIDC_TOKEN` / `AI_GATEWAY_API_KEY`, else `~/.fx/auth.json` (fx login) or `~/.fx/api-key` → AI Gateway `coding-agent/v1/credits` | Gateway credit balance + total spend (USD) | `~/.fx/usage.jsonl` (Gateway, Codex/Grok subscriptions, custom endpoints; fx keeps 35 days) |
+
+OpenCode Go reads current native credentials from `$XDG_DATA_HOME/opencode/opencode.db` (default `~/.local/share/opencode/opencode.db`) and supports legacy `auth.json` when the native credential store is absent. `OPENCODE_AUTH_CONTENT` overrides Go's stored auth; stored keys take precedence over `OPENCODE_API_KEY`. Go requires an active subscription in the key's organization. See the [Go usage endpoint](https://github.com/anomalyco/opencode/blob/dev/packages/console/app/src/routes/zen/go/v1/usage.ts) for the upstream quota contract.
+
+Zen reads the selected OpenCode Console OAuth credential, not a model API key. Connect with `opencode auth login opencode --method device`, then run `usg test opencode-zen`. Balance requests use the [Console billing API](https://opencode.ai/console/api/billing/status) with bearer authentication and `x-org-id`; microcents are converted to USD without inventing quota percentages or reset times. Native credentials are read-only, and OpenCode owns session refresh. Alternatively, set `OPENCODE_CONSOLE_TOKEN` to a Console access token. If the native credential has no selected organization and the account has several, set `OPENCODE_CONSOLE_ORG_ID`.
 
 The token ledger records local per-agent token usage into `~/.local/share/usagenometer/history.sqlite3`; `usg doctor` shows per-agent scan coverage and event counts. Gemini CLI usage lands under the `gemini` ledger provider while the quota card above stays Antigravity. A provider emits events only when its files carry real token fields — the ledger never fabricates usage.
 
-Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, `kimi login`, Antigravity). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
-Auth is read-only from existing logins (`codex login`, Cursor sign-in, `claude login`, `grok login`, Antigravity, `devin auth login` / `DEVIN_API_KEY`). For Antigravity token refresh, set `USAGENOMETER_GOOGLE_CLIENT_ID` and `USAGENOMETER_GOOGLE_CLIENT_SECRET` when needed.
+Each ledger scan commits events, all collector checkpoints and scan-completion metadata in one SQLite transaction. A database failure rolls the scan back and returns an error, so the next scan can retry the unread usage. The TUI reports rescan failures without replacing its last loaded ledger.
+
+Credentials stay in existing provider-native stores. Cursor uses an unexpired CLI login first and falls back to the app's read-only SQLite state when the CLI login is absent, invalid or expired. Antigravity prefers agy and falls back to the system app's read-only OAuth state; refresh uses the native Google OAuth application metadata, with optional `USAGENOMETER_GOOGLE_CLIENT_ID` / `USAGENOMETER_GOOGLE_CLIENT_SECRET` or `AGY_CLIENT_ID` / `AGY_CLIENT_SECRET` overrides.
+
+Grok renews expired x.ai OIDC sessions and atomically updates only the selected entry in its original `auth.json`, including a rotated refresh token when returned. It uses Grok's native lock and preserves unrelated entries and file permissions; there is no separate usagenometer credential store. Cursor and Antigravity credential stores remain read-only. Expired fx logins are left for fx itself to refresh.
 
 Adding a provider is **Rust-only** — see **[docs/adding-providers.md](docs/adding-providers.md)**.
 
