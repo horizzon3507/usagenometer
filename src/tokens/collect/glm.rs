@@ -26,7 +26,10 @@ const PROVIDER: &str = "glm";
 /// Full scan of the shared Claude projects tree; incremental via namespaced
 /// byte offsets when the ledger store is reachable.
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for file in jsonl_files(&claude::claude_root().join("projects")) {
         let slug = file
@@ -35,10 +38,10 @@ pub fn scan() -> Vec<TokenEvent> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let key = offset_key(&file);
-        let offset = resume_offset(store.as_ref(), &key, &file);
+        let offset = resume_offset(store, &key, &file);
         let (mut found, next) = read_jsonl_events(&file, offset, |v| glm_event(v, &slug));
         events.append(&mut found);
-        if let Some(store) = store.as_ref() {
+        if let Some(store) = store {
             store.set_scan_offset(&key, next, file_mtime(&file));
         }
     }

@@ -30,14 +30,17 @@ use crate::tokens::{TokenEvent, TokenStore};
 const PROVIDER: &str = "grok";
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for root in scan_roots() {
         if !root.is_dir() {
             continue;
         }
-        events.extend(scan_sessions(&root.join("sessions"), store.as_ref()));
-        events.extend(scan_logs(&root.join("logs"), store.as_ref()));
+        events.extend(scan_sessions(&root.join("sessions"), store));
+        events.extend(scan_logs(&root.join("logs"), store));
     }
     events
 }

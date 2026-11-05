@@ -41,7 +41,10 @@ const PROVIDER: &str = "pi";
 const HEADER_MAX_BYTES: u64 = 1024 * 1024;
 
 pub fn scan() -> Vec<TokenEvent> {
-    let store = TokenStore::open().ok();
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
     let mut events = Vec::new();
     for root in scan_roots() {
         if !root.is_dir() {
@@ -50,12 +53,12 @@ pub fn scan() -> Vec<TokenEvent> {
         for path in collect_files(std::slice::from_ref(&root), &["jsonl"]) {
             let ctx = file_context(&path);
             let fallback_ts = file_mtime(&path);
-            let offset = util::resume_offset(store.as_ref(), &path);
+            let offset = util::resume_offset(store, &path);
             let (mut found, next) = read_jsonl_events(&path, offset, |record| {
                 record_events(record, &ctx, fallback_ts)
             });
             events.append(&mut found);
-            util::mark_scanned(store.as_ref(), &path, next);
+            util::mark_scanned(store, &path, next);
         }
     }
     events

@@ -4,8 +4,8 @@
 
 pub mod collect;
 
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -61,6 +61,7 @@ impl TokenEvent {
 pub struct TokenStore {
     conn: Connection,
     path: PathBuf,
+    scan_error: RefCell<Option<String>>,
 }
 
 impl TokenStore {
@@ -74,7 +75,11 @@ impl TokenStore {
         paths::ensure_dir(&path)?;
         let conn = Connection::open(&path)
             .with_context(|| format!("open token ledger {}", path.display()))?;
-        let store = Self { conn, path };
+        let store = Self {
+            conn,
+            path,
+            scan_error: RefCell::new(None),
+        };
         store.init()?;
         Ok(store)
     }
@@ -115,10 +120,16 @@ impl TokenStore {
         if events.is_empty() {
             return Ok(0);
         }
-        let tx = self.conn.unchecked_transaction()?;
+        let in_scan = !self.conn.is_autocommit();
+        let tx = if in_scan {
+            None
+        } else {
+            Some(self.conn.unchecked_transaction()?)
+        };
+        let conn = tx.as_ref().map_or(&self.conn, |tx| &**tx);
         let mut inserted = 0usize;
         {
-            let mut stmt = tx.prepare(
+            let mut stmt = conn.prepare(
                 r#"
                 INSERT OR IGNORE INTO token_events
                     (event_hash, provider, model, session_id, project, ts,
@@ -141,7 +152,9 @@ impl TokenStore {
                 ])?;
             }
         }
-        tx.commit()?;
+        if let Some(tx) = tx {
+            tx.commit()?;
+        }
         Ok(inserted)
     }
 
@@ -219,19 +232,20 @@ impl TokenStore {
     /// re-parsed when size or mtime changed since the recorded offset.
     pub fn scan_offset(&self, path: &std::path::Path) -> Result<Option<(u64, f64)>> {
         let key = path.display().to_string();
-        let row = self
-            .conn
-            .query_row(
-                "SELECT byte_offset, mtime FROM token_scan_offsets WHERE path = ?1",
-                params![key],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
-            )
-            .ok();
-        Ok(row.map(|(off, mtime)| (off.max(0) as u64, mtime)))
+        match self.conn.query_row(
+            "SELECT byte_offset, mtime FROM token_scan_offsets WHERE path = ?1",
+            params![key],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+        ) {
+            Ok((offset, mtime)) => Ok(Some((offset.max(0) as u64, mtime))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
+    /// Checkpoint failures are retained for the scan coordinator to roll back.
     pub fn set_scan_offset(&self, path: &std::path::Path, byte_offset: u64, mtime: f64) {
-        let _ = self.conn.execute(
+        let result = self.conn.execute(
             r#"
             INSERT INTO token_scan_offsets (path, byte_offset, mtime)
             VALUES (?1, ?2, ?3)
@@ -241,29 +255,41 @@ impl TokenStore {
             "#,
             params![path.display().to_string(), byte_offset as i64, mtime],
         );
+        if let Err(error) = result {
+            *self.scan_error.borrow_mut() = Some(format!("write token scan offset: {error}"));
+        }
     }
 
     /// Unix time of the last completed `scan_all`, if any.
     pub fn last_scan_unix(&self) -> Result<Option<f64>> {
-        let v: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM token_scan_meta WHERE key = 'last_scan_unix'",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-        Ok(v.and_then(|s| s.parse::<f64>().ok()))
+        let value: Option<String> = match self.conn.query_row(
+            "SELECT value FROM token_scan_meta WHERE key = 'last_scan_unix'",
+            [],
+            |row| row.get(0),
+        ) {
+            Ok(value) => Some(value),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(value.and_then(|value| value.parse::<f64>().ok()))
     }
 
-    pub fn record_scan(&self, at_unix: f64) {
-        let _ = self.conn.execute(
+    pub fn record_scan(&self, at_unix: f64) -> Result<()> {
+        self.conn.execute(
             r#"
             INSERT INTO token_scan_meta (key, value) VALUES ('last_scan_unix', ?1)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             "#,
             params![at_unix.to_string()],
-        );
+        )?;
+        Ok(())
+    }
+
+    fn take_scan_error(&self) -> Result<()> {
+        match self.scan_error.borrow_mut().take() {
+            Some(error) => Err(anyhow::anyhow!(error)),
+            None => Ok(()),
+        }
     }
 
     /// Stored events count per provider (for doctor / export).
@@ -326,40 +352,56 @@ pub struct TokenTotals {
     pub events: u64,
 }
 
-/// Scan every provider's local files, record new events, return count.
-pub fn scan_all(providers: &[&str]) -> usize {
-    let Ok(store) = TokenStore::open() else {
-        return 0;
-    };
+pub fn scan_all(providers: &[&str]) -> Result<usize> {
+    let store = TokenStore::open()?;
     scan_with_store(&store, providers)
 }
 
-fn scan_with_store(store: &TokenStore, providers: &[&str]) -> usize {
-    let mut offsets = collect::ScanOffsets::load(store);
-    let mut events = Vec::new();
-    for provider in providers {
-        let mut batch = match *provider {
-            "claude" => collect::claude::collect(&mut offsets),
-            "codex" => collect::codex::collect(&mut offsets),
-            "grok" => collect::grok::scan(),
-            "gemini" => collect::gemini::scan(),
-            "cursor" => collect::cursor::scan(),
-            "antigravity" => collect::antigravity::scan(),
-            "opencode" => collect::opencode::scan(),
-            "glm" => collect::glm::scan(),
-            "omp" => collect::omp::scan(),
-            "droid" => collect::droid::scan(),
-            "pi" => collect::pi::scan(),
-            "kimi" => collect::kimi::scan(),
-            "devin-local" => collect::devin_local::scan(),
-            _ => Vec::new(),
-        };
-        events.append(&mut batch);
+fn scan_with_store(store: &TokenStore, providers: &[&str]) -> Result<usize> {
+    store.conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        let mut offsets = collect::ScanOffsets::load(store)?;
+        let mut events = Vec::new();
+        for provider in providers {
+            let mut batch = match *provider {
+                "claude" => collect::claude::collect(&mut offsets),
+                "codex" => collect::codex::collect(&mut offsets),
+                "grok" => collect::grok::scan_with_store(Some(store)),
+                "gemini" => collect::gemini::scan_with_store(Some(store)),
+                "cursor" => collect::cursor::scan(),
+                "antigravity" => collect::antigravity::scan_with_store(Some(store)),
+                "opencode" => collect::opencode::scan_with_store(Some(store)),
+                "glm" => collect::glm::scan_with_store(Some(store)),
+                "omp" => collect::omp::scan_with_store(Some(store)),
+                "droid" => collect::droid::scan_with_store(Some(store)),
+                "pi" => collect::pi::scan_with_store(Some(store)),
+                "kimi" => collect::kimi::scan_with_store(Some(store)),
+                "devin-local" => collect::devin_local::scan_with_store(Some(store)),
+                _ => Vec::new(),
+            };
+            events.append(&mut batch);
+        }
+        offsets.flush(store)?;
+        store.take_scan_error()?;
+        let n = store.record_events(&events)?;
+        store.record_scan(now_unix())?;
+        store.take_scan_error()?;
+        Ok(n)
+    })();
+    match result {
+        Ok(n) => match store.conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(n),
+            Err(error) => {
+                let _ = store.conn.execute_batch("ROLLBACK");
+                Err(error.into())
+            }
+        },
+        Err(error) => {
+            let _ = store.take_scan_error();
+            let _ = store.conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
     }
-    offsets.flush(store);
-    let n = store.record_events(&events).unwrap_or(0);
-    store.record_scan(now_unix());
-    n
 }
 
 // ---------- reporting helpers (used by `usg tokens`; additive, not part of
