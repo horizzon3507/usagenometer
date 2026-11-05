@@ -41,7 +41,7 @@ pub fn run(privacy: bool) -> Vec<Check> {
     checks.extend(check_commandcode());
     checks.push(auth_check(
         "antigravity auth",
-        crate::providers::availability::antigravity_auth_probe(),
+        crate::providers::antigravity::auth_description(),
     ));
     checks.push(auth_check(
         "opencode-go auth",
