@@ -27,14 +27,45 @@ pub struct Check {
 pub fn run(privacy: bool) -> Vec<Check> {
     let mut checks = Vec::new();
     checks.extend(check_codex(privacy));
-    checks.extend(check_cursor(privacy));
+    checks.push(auth_check(
+        "cursor auth",
+        crate::providers::cursor::auth_description(),
+    ));
     checks.extend(check_claude());
-    checks.extend(check_grok(privacy));
+    checks.push(auth_check(
+        "grok auth",
+        crate::providers::grok::auth_description(),
+    ));
     checks.extend(check_devin_cloud());
-    checks.extend(check_antigravity());
+    checks.extend(check_fx());
+    checks.extend(check_commandcode());
+    checks.push(auth_check(
+        "antigravity auth",
+        crate::providers::availability::antigravity_auth_probe(),
+    ));
+    checks.push(auth_check(
+        "opencode-go auth",
+        crate::providers::opencode::auth_description_go(),
+    ));
+    checks.push(auth_check(
+        "opencode-zen auth",
+        crate::providers::opencode::auth_description_zen(),
+    ));
     checks.extend(check_xdg());
     checks.extend(check_token_ledger());
     checks
+}
+
+fn auth_check(name: &str, result: Result<String, String>) -> Check {
+    let (status, detail) = match result {
+        Ok(detail) => (CheckStatus::Pass, detail),
+        Err(detail) => (CheckStatus::Fail, detail),
+    };
+    Check {
+        status,
+        name: name.into(),
+        detail,
+    }
 }
 
 pub fn print_report(checks: &[Check]) {
@@ -190,72 +221,6 @@ fn check_codex(privacy: bool) -> Vec<Check> {
     out
 }
 
-fn check_cursor(privacy: bool) -> Vec<Check> {
-    let path = cursor_state_path();
-    let mut out = Vec::new();
-    if !path.exists() {
-        out.push(Check {
-            status: CheckStatus::Fail,
-            name: "cursor state.vscdb".into(),
-            detail: format!("missing {}", paths::display_path(&path)),
-        });
-        return out;
-    }
-    out.push(Check {
-        status: CheckStatus::Pass,
-        name: "cursor state.vscdb".into(),
-        detail: paths::display_path(&path),
-    });
-    // Best-effort: open RO and look for token key
-    let uri = format!("file:{}?mode=ro", path.display());
-    match rusqlite::Connection::open(uri) {
-        Ok(conn) => {
-            let token: Option<String> = conn
-                .query_row(
-                    "SELECT value FROM ItemTable WHERE key = ?1",
-                    ["cursorAuth/accessToken"],
-                    |row| row.get::<_, String>(0),
-                )
-                .ok();
-            match token {
-                Some(t) if !t.is_empty() => {
-                    out.push(token_expiry_check("cursor token", &normalize_bearer(&t)));
-                }
-                _ => out.push(Check {
-                    status: CheckStatus::Fail,
-                    name: "cursor token".into(),
-                    detail: "accessToken missing — sign in to Cursor".into(),
-                }),
-            }
-            let email: Option<String> = conn
-                .query_row(
-                    "SELECT value FROM ItemTable WHERE key = ?1",
-                    ["cursorAuth/cachedEmail"],
-                    |row| row.get::<_, String>(0),
-                )
-                .ok();
-            if let Some(email) = email.filter(|s| !s.is_empty()) {
-                let shown = if privacy {
-                    privacy::redact_account(&email)
-                } else {
-                    email
-                };
-                out.push(Check {
-                    status: CheckStatus::Pass,
-                    name: "cursor account".into(),
-                    detail: shown,
-                });
-            }
-        }
-        Err(_) => out.push(Check {
-            status: CheckStatus::Warn,
-            name: "cursor db open".into(),
-            detail: "could not open state db (locked?)".into(),
-        }),
-    }
-    out
-}
-
 fn check_claude() -> Vec<Check> {
     let path = claude_credentials_path();
     let mut out = Vec::new();
@@ -314,56 +279,6 @@ fn check_claude() -> Vec<Check> {
     out
 }
 
-fn check_grok(privacy: bool) -> Vec<Check> {
-    let path = grok_auth_path();
-    let mut out = Vec::new();
-    if !path.exists() {
-        out.push(Check {
-            status: CheckStatus::Fail,
-            name: "grok auth".into(),
-            detail: format!("missing {} — run grok login", paths::display_path(&path)),
-        });
-        return out;
-    }
-    out.push(Check {
-        status: CheckStatus::Pass,
-        name: "grok auth file".into(),
-        detail: paths::display_path(&path),
-    });
-    if let Ok(raw) = fs::read_to_string(&path)
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw)
-    {
-        let token = v
-            .get("access_token")
-            .or_else(|| v.get("accessToken"))
-            .or_else(|| v.pointer("/session/access_token"))
-            .and_then(|x| x.as_str());
-        match token {
-            Some(t) if !t.is_empty() => {
-                out.push(token_expiry_check("grok token", &normalize_bearer(t)));
-            }
-            _ => out.push(Check {
-                status: CheckStatus::Fail,
-                name: "grok token".into(),
-                detail: "no session token".into(),
-            }),
-        }
-        if let Some(email) = v.get("email").and_then(|x| x.as_str()) {
-            let shown = if privacy {
-                privacy::redact_account(email)
-            } else {
-                email.to_string()
-            };
-            out.push(Check {
-                status: CheckStatus::Pass,
-                name: "grok account".into(),
-                detail: shown,
-            });
-        }
-    }
-    out
-}
-
 fn check_devin_cloud() -> Vec<Check> {
     let mut out = Vec::new();
     let env_key = std::env::var("DEVIN_API_KEY")
@@ -395,66 +310,106 @@ fn check_devin_cloud() -> Vec<Check> {
     out
 }
 
-fn check_antigravity() -> Vec<Check> {
-    let mut out = Vec::new();
-    let oauth = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".gemini")
-        .join("oauth_creds.json");
-    let accounts = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".gemini")
-        .join("google_accounts.json");
-
-    if oauth.exists() {
-        out.push(Check {
+/// fx credential presence in fx's own precedence order. Never reads tokens
+/// beyond the login expiry field.
+fn check_fx() -> Vec<Check> {
+    let env = ["VERCEL_OIDC_TOKEN", "AI_GATEWAY_API_KEY"]
+        .into_iter()
+        .find(|k| std::env::var(k).is_ok_and(|v| !v.trim().is_empty()));
+    let home = crate::providers::fx::fx_home();
+    let auth = home.join("auth.json");
+    let key = home.join("api-key");
+    let check = if let Some(var) = env {
+        Check {
             status: CheckStatus::Pass,
-            name: "antigravity oauth file".into(),
-            detail: paths::display_path(&oauth),
-        });
-    } else {
-        out.push(Check {
-            status: CheckStatus::Warn,
-            name: "antigravity oauth file".into(),
-            detail: format!(
-                "missing {} (may use secret store)",
-                paths::display_path(&oauth)
-            ),
-        });
-    }
-    if accounts.exists() {
-        out.push(Check {
+            name: "fx credential".into(),
+            detail: format!("{var} set"),
+        }
+    } else if auth.exists() {
+        let expires_ms = fs::read_to_string(&auth)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| v.get("expires_at_ms").and_then(|x| x.as_f64()));
+        match expires_ms {
+            Some(ms) if ms / 1000.0 <= now_secs() => Check {
+                status: CheckStatus::Warn,
+                name: "fx login".into(),
+                detail: format!(
+                    "{} expired — run any fx command to refresh",
+                    paths::display_path(&auth)
+                ),
+            },
+            _ => Check {
+                status: CheckStatus::Pass,
+                name: "fx login".into(),
+                detail: paths::display_path(&auth),
+            },
+        }
+    } else if key.exists() {
+        Check {
             status: CheckStatus::Pass,
-            name: "antigravity accounts".into(),
-            detail: paths::display_path(&accounts),
-        });
+            name: "fx api key".into(),
+            detail: paths::display_path(&key),
+        }
     } else {
-        out.push(Check {
+        Check {
             status: CheckStatus::Skip,
-            name: "antigravity accounts".into(),
-            detail: "google_accounts.json not found".into(),
-        });
-    }
+            name: "fx credential".into(),
+            detail: "no AI Gateway credential — fx login / fx setup".into(),
+        }
+    };
+    vec![check]
+}
 
-    let has_id = std::env::var_os("USAGENOMETER_GOOGLE_CLIENT_ID")
-        .filter(|v| !v.is_empty())
-        .is_some();
-    let has_secret = std::env::var_os("USAGENOMETER_GOOGLE_CLIENT_SECRET")
-        .filter(|v| !v.is_empty())
-        .is_some();
-    match (has_id, has_secret) {
-        (true, true) => out.push(Check {
+fn check_commandcode() -> Vec<Check> {
+    let env_key = std::env::var("COMMANDCODE_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".commandcode")
+        .join("auth.json");
+    let check = if env_key.is_some() {
+        Check {
             status: CheckStatus::Pass,
-            name: "antigravity oauth env".into(),
-            detail: "USAGENOMETER_GOOGLE_CLIENT_ID/SECRET set".into(),
-        }),
-        _ => out.push(Check {
-            status: CheckStatus::Warn,
-            name: "antigravity oauth env".into(),
-            detail: "CLIENT_ID/SECRET unset — refresh may fail".into(),
-        }),
-    }
-    out
+            name: "commandcode api key".into(),
+            detail: "COMMANDCODE_API_KEY set".into(),
+        }
+    } else if !path.exists() {
+        Check {
+            status: CheckStatus::Skip,
+            name: "commandcode auth".into(),
+            detail: "no local login — run commandcode login".into(),
+        }
+    } else {
+        match fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| {
+                value
+                    .get("apiKey")
+                    .or_else(|| value.get("api_key"))
+                    .and_then(|key| key.as_str())
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_string)
+            }) {
+            Some(_) => Check {
+                status: CheckStatus::Pass,
+                name: "commandcode auth".into(),
+                detail: paths::display_path(&path),
+            },
+            None => Check {
+                status: CheckStatus::Warn,
+                name: "commandcode auth".into(),
+                detail: format!(
+                    "{} has no apiKey — run commandcode login",
+                    paths::display_path(&path)
+                ),
+            },
+        }
+    };
+    vec![check]
 }
 
 /// Token-ledger section: per-agent scan roots found/missing, stored event
@@ -580,19 +535,6 @@ fn codex_auth_path() -> PathBuf {
         .join("auth.json")
 }
 
-fn cursor_state_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".config")
-        })
-        .join("Cursor")
-        .join("User")
-        .join("globalStorage")
-        .join("state.vscdb")
-}
-
 fn claude_credentials_path() -> PathBuf {
     if let Ok(custom) = std::env::var("CLAUDE_CREDENTIALS_PATH") {
         let trimmed = custom.trim();
@@ -604,11 +546,4 @@ fn claude_credentials_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join(".credentials.json")
-}
-
-fn grok_auth_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".grok")
-        .join("auth.json")
 }
