@@ -10,7 +10,7 @@ use crate::paths;
 use crate::privacy;
 use crate::providers::types::ProviderSnapshot;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HistorySample {
     pub id: i64,
     pub recorded_at: f64,
@@ -29,7 +29,15 @@ pub struct MeterPoint {
     pub used_percent: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunwayVerdict {
+    ExhaustsBeforeReset { margin_seconds: f64 },
+    SafeUntilReset { projected_used: f64 },
+    Steady,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Runway {
     pub provider_id: String,
     pub provider_label: String,
@@ -39,6 +47,8 @@ pub struct Runway {
     pub eta_seconds: Option<f64>,
     pub samples: usize,
     pub reset_at: Option<f64>,
+    pub pace_factor: Option<f64>,
+    pub verdict: Option<RunwayVerdict>,
 }
 
 pub struct HistoryStore {
@@ -62,8 +72,10 @@ impl HistoryStore {
     }
 
     fn conn(&self) -> Result<Connection> {
-        Connection::open(&self.path)
-            .with_context(|| format!("open history db {}", self.path.display()))
+        let conn = Connection::open(&self.path)
+            .with_context(|| format!("open history db {}", self.path.display()))?;
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
+        Ok(conn)
     }
 
     fn init(&self) -> Result<()> {
@@ -260,6 +272,37 @@ impl HistoryStore {
                 let (eta_seconds, samples) = crate::eta::eta_from_points(&series)
                     .map(|(seconds, count)| (Some(seconds), count))
                     .unwrap_or((None, series.len()));
+                let reset_at = meter.get("reset_at").and_then(|v| v.as_f64()).or_else(|| {
+                    meter
+                        .get("reset_after_seconds")
+                        .and_then(|v| v.as_f64())
+                        .filter(|after| *after > 0.0)
+                        .map(|after| latest.recorded_at + after)
+                });
+                let now = now_secs();
+                let (pace_factor, verdict) = match reset_at.map(|r| r - now).filter(|r| *r > 0.0) {
+                    Some(rem_time) => match eta_seconds {
+                        Some(eta) => {
+                            let rem_quota = (1.0 - used).max(0.0);
+                            let sustainable_rate = rem_quota / rem_time;
+                            let burn_rate = if eta > 0.0 { rem_quota / eta } else { 0.0 };
+                            let pace = (sustainable_rate > 1e-12 && burn_rate > 0.0)
+                                .then(|| burn_rate / sustainable_rate);
+                            let v = if eta < rem_time {
+                                RunwayVerdict::ExhaustsBeforeReset {
+                                    margin_seconds: rem_time - eta,
+                                }
+                            } else {
+                                RunwayVerdict::SafeUntilReset {
+                                    projected_used: (used + burn_rate * rem_time).clamp(0.0, 1.0),
+                                }
+                            };
+                            (pace, Some(v))
+                        }
+                        None => (None, Some(RunwayVerdict::Steady)),
+                    },
+                    None => (None, None),
+                };
                 out.push(Runway {
                     provider_id: id.clone(),
                     provider_label: latest.provider_label.clone(),
@@ -272,7 +315,9 @@ impl HistoryStore {
                     used_percent: used,
                     eta_seconds,
                     samples,
-                    reset_at: meter.get("reset_at").and_then(|v| v.as_f64()),
+                    reset_at,
+                    pace_factor,
+                    verdict,
                 });
             }
         }
@@ -281,6 +326,65 @@ impl HistoryStore {
                 .cmp(&b.provider_id)
                 .then(a.meter_id.cmp(&b.meter_id))
         });
+        Ok(out)
+    }
+
+    pub fn prune(&self, older_than_days: u64) -> Result<usize> {
+        let cutoff = now_secs() - (older_than_days as f64) * 86_400.0;
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM snapshots WHERE recorded_at < ?1",
+            params![cutoff],
+        )?;
+        Ok(deleted)
+    }
+
+    pub fn snapshot_count(&self) -> Result<u64> {
+        let conn = self.conn()?;
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
+        Ok(n.max(0) as u64)
+    }
+
+    /// Earliest sample at or after `ts_unix` per provider (for `history --diff`).
+    pub fn samples_at_or_after(
+        &self,
+        ts_unix: f64,
+        provider: Option<&str>,
+    ) -> Result<Vec<HistorySample>> {
+        let conn = self.conn()?;
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(pid) = provider {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, recorded_at, provider_id, provider_label, account, plan, meters_json
+                FROM snapshots
+                WHERE recorded_at >= ?1 AND provider_id = ?2
+                ORDER BY recorded_at ASC
+                LIMIT 1
+                "#,
+            )?;
+            let rows = stmt.query_map(params![ts_unix, pid], map_sample)?;
+            for row in rows {
+                out.push(row?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, recorded_at, provider_id, provider_label, account, plan, meters_json
+                FROM snapshots
+                WHERE recorded_at >= ?1
+                ORDER BY recorded_at ASC
+                "#,
+            )?;
+            let rows = stmt.query_map(params![ts_unix], map_sample)?;
+            for row in rows {
+                let s = row?;
+                if seen.insert(s.provider_id.clone()) {
+                    out.push(s);
+                }
+            }
+        }
         Ok(out)
     }
 }
@@ -323,6 +427,16 @@ pub fn sparkline(values: &[f64], width: usize) -> String {
         out.push(BLOCKS[bi]);
     }
     out
+}
+
+/// Compact sparkline from integer counts, max-normalized left→right.
+pub fn sparkline_u64(values: &[u64], width: usize) -> String {
+    let max = values.iter().copied().max().unwrap_or(0);
+    if max == 0 {
+        return "▁".repeat(width.min(values.len().max(1)));
+    }
+    let norm: Vec<f64> = values.iter().map(|v| *v as f64 / max as f64).collect();
+    sparkline(&norm, width)
 }
 
 pub fn format_history_line(sample: &HistorySample, privacy: bool) -> String {
@@ -383,6 +497,28 @@ pub fn format_runway_line(runway: &Runway) -> String {
     );
     if let Some(reset) = reset {
         line.push_str(&format!(" · {reset}"));
+    }
+    if let Some(pace) = runway.pace_factor {
+        line.push_str(&format!(" · {pace:.1}x pace"));
+    }
+    if let Some(ref verdict) = runway.verdict {
+        match verdict {
+            RunwayVerdict::ExhaustsBeforeReset { margin_seconds } => {
+                line.push_str(&format!(
+                    " · exhausts {} before reset",
+                    crate::ui::fmt_duration_secs((*margin_seconds).max(0.0) as u64)
+                ));
+            }
+            RunwayVerdict::SafeUntilReset { projected_used } => {
+                line.push_str(&format!(
+                    " · safe (~{:.0}% at reset)",
+                    projected_used * 100.0
+                ));
+            }
+            RunwayVerdict::Steady => {
+                line.push_str(" · steady");
+            }
+        }
     }
     line
 }
