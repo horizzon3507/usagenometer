@@ -7,7 +7,18 @@ use anyhow::{Context, Result};
 
 const APP: &str = "usagenometer";
 
+fn env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var(var)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
 pub fn config_dir() -> PathBuf {
+    if let Some(dir) = env_dir("USG_CONFIG_DIR") {
+        return dir;
+    }
     dirs::config_dir()
         .unwrap_or_else(|| {
             dirs::home_dir()
@@ -18,6 +29,9 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn data_dir() -> PathBuf {
+    if let Some(dir) = env_dir("USG_DATA_DIR") {
+        return dir;
+    }
     dirs::data_dir()
         .unwrap_or_else(|| {
             dirs::home_dir()
@@ -29,6 +43,9 @@ pub fn data_dir() -> PathBuf {
 }
 
 pub fn cache_dir() -> PathBuf {
+    if let Some(dir) = env_dir("USG_CACHE_DIR") {
+        return dir;
+    }
     dirs::cache_dir()
         .unwrap_or_else(|| {
             dirs::home_dir()
