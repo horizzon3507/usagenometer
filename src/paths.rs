@@ -56,7 +56,41 @@ pub fn cache_dir() -> PathBuf {
 }
 
 pub fn config_file() -> PathBuf {
-    config_dir().join("config.toml")
+    if let Some(path) = env_dir("USG_CONFIG") {
+        return path;
+    }
+    let primary = config_dir().join("config.toml");
+    if primary.exists() {
+        return primary;
+    }
+    if let Some(home) = dirs::home_dir() {
+        let dot_config = home.join(".config").join(APP).join("config.toml");
+        if dot_config.exists() {
+            return dot_config;
+        }
+    }
+    primary
+}
+
+/// Walk upward from `cwd` looking for `.usg.toml` (stops at `$HOME` or `/`).
+pub fn project_config_file() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let home = dirs::home_dir();
+    let mut dir = cwd.as_path();
+    loop {
+        let candidate = dir.join(".usg.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if home.as_deref() == Some(dir) {
+            break;
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    None
 }
 
 pub fn history_db() -> PathBuf {
