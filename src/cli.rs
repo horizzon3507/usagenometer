@@ -34,6 +34,8 @@ pub enum OutputFormat {
     Text,
     Json,
     Prometheus,
+    Waybar,
+    Csv,
 }
 
 /// Aggregation window for `usg tokens`.
@@ -218,6 +220,11 @@ impl ProviderArg {
             Self::DevinLocal,
             Self::Gemini,
             Self::CommandCode,
+            Self::Windsurf,
+            Self::Cline,
+            Self::RooCode,
+            Self::Aider,
+            Self::Goose,
         ]
     }
 }
@@ -314,6 +321,41 @@ pub struct Cli {
     )]
     pub compact: bool,
 
+    /// Append today's token spend (USD) in compact output
+    #[arg(
+        long = "compact-cost",
+        global = true,
+        help = "Include today's token USD spend in compact output"
+    )]
+    pub compact_cost: bool,
+
+    /// Custom template string for compact output ({label}, {short}, {pct}, {used_pct}, {left_pct}, {reset}, {stale})
+    #[arg(
+        long = "template",
+        global = true,
+        value_name = "STR",
+        help = "Custom compact statusline template"
+    )]
+    pub template: Option<String>,
+
+    /// Explicit config file path (overrides XDG / USG_CONFIG)
+    #[arg(long = "config", global = true, value_name = "PATH")]
+    pub config: Option<std::path::PathBuf>,
+
+    /// Named multi-account profile from config.toml ([profiles.<name>])
+    #[arg(
+        short = 'P',
+        long = "profile",
+        global = true,
+        env = "USG_PROFILE",
+        value_name = "NAME"
+    )]
+    pub profile: Option<String>,
+
+    /// Ignore per-project .usg.toml overrides
+    #[arg(long = "no-project-config", global = true)]
+    pub no_project_config: bool,
+
     /// Hide/redact account emails
     #[arg(long = "privacy", global = true, help = "Redact account identifiers")]
     pub privacy: bool,
@@ -336,6 +378,15 @@ pub struct Cli {
     )]
     pub alert_eta: Option<f64>,
 
+    /// Alert when a USD balance meter falls at or below USD
+    #[arg(
+        long = "alert-balance-usd",
+        global = true,
+        value_name = "USD",
+        help = "Warn when USD balance <= USD"
+    )]
+    pub alert_balance_usd: Option<f64>,
+
     /// Enable desktop notify-send for alerts
     #[arg(
         long = "notify",
@@ -356,13 +407,13 @@ pub struct Cli {
     #[arg(long = "pretty", global = true, help = "Pretty-print JSON output")]
     pub pretty: bool,
 
-    /// Output format (text / json / prometheus)
+    /// Output format (text / json / prometheus / waybar / csv)
     #[arg(
         long = "format",
         global = true,
         value_enum,
         value_name = "FMT",
-        help = "Output format: text, json, prometheus"
+        help = "Output format: text, json, prometheus, waybar, csv"
     )]
     pub format: Option<OutputFormat>,
 
@@ -421,16 +472,62 @@ pub enum Command {
         /// Require each available quota meter to have at least this much remaining (0–100)
         #[arg(long = "fail-under", value_name = "PCT", default_value_t = 10.0)]
         fail_under: f64,
+        /// Require each USD balance meter to have at least this much remaining
+        #[arg(long = "min-balance-usd", value_name = "USD")]
+        min_balance_usd: Option<f64>,
+        /// Fail (exit 2) if any meter's exhaustion ETA is below this many hours
+        #[arg(long = "fail-eta-hours", value_name = "HOURS")]
+        fail_eta_hours: Option<f64>,
         /// Fail (exit 2) when token spend in the period reaches USD
         #[arg(long = "budget-usd", value_name = "USD")]
         budget_usd: Option<f64>,
         /// Budget window for --budget-usd: day | week | month
         #[arg(long = "period", value_enum, value_name = "PERIOD")]
         period: Option<BudgetPeriod>,
+        /// Scope --budget-usd to the current workspace/git repo
+        #[arg(long)]
+        here: bool,
+        /// Scope --budget-usd to specific project name(s)
+        #[arg(long = "project", value_name = "NAME")]
+        projects: Vec<String>,
+    },
+
+    /// Pick the best available provider for scripting and routing
+    #[command(visible_alias = "route")]
+    Pick {
+        /// Minimum remaining % required to be eligible
+        #[arg(long = "min-left", value_name = "PCT", default_value_t = 10.0)]
+        min_left: f64,
+        /// Ranking strategy: headroom | reset | runway
+        #[arg(long, value_enum, default_value_t = crate::routing::RoutingStrategy::Headroom)]
+        strategy: crate::routing::RoutingStrategy,
+        /// Print the resolved local CLI binary instead of provider ID
+        #[arg(long)]
+        cmd: bool,
+        /// Allow stale cached snapshots when live APIs fail
+        #[arg(long)]
+        allow_stale: bool,
+    },
+
+    /// Pick the best ready agent CLI and execute it with extra arguments
+    Run {
+        /// Minimum remaining % required to be eligible
+        #[arg(long = "min-left", value_name = "PCT", default_value_t = 10.0)]
+        min_left: f64,
+        /// Ranking strategy: headroom | reset | runway
+        #[arg(long, value_enum, default_value_t = crate::routing::RoutingStrategy::Headroom)]
+        strategy: crate::routing::RoutingStrategy,
+        /// Arguments passed through to the selected agent CLI
+        #[arg(last = true)]
+        args: Vec<String>,
     },
 
     /// Diagnose auth paths / expiry (no secrets)
-    Doctor,
+    Doctor {
+        /// Apply safe local fixes (XDG dirs, 0600 auth perms, prune dead scan offsets, initial ledger scan)
+        #[arg(long)]
+        fix: bool,
+    },
 
     /// Explain what provider meters mean
     Explain {
@@ -450,6 +547,33 @@ pub enum Command {
         /// Only include events since (RFC3339 or YYYY-MM-DD)
         #[arg(long, value_name = "WHEN")]
         since: Option<String>,
+        /// Only include events before (RFC3339 or YYYY-MM-DD)
+        #[arg(long, value_name = "WHEN")]
+        until: Option<String>,
+        /// Filter events to the current workspace/git repository
+        #[arg(long)]
+        here: bool,
+        /// Filter events to specific project name(s)
+        #[arg(long = "project", value_name = "NAME")]
+        projects: Vec<String>,
+        /// Filter events to session IDs matching prefix
+        #[arg(long = "session", value_name = "PREFIX")]
+        session: Option<String>,
+        /// Sort rows descending and show only the top N
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+        /// Compare against the previous equal-length period (Δ%)
+        #[arg(long)]
+        compare: bool,
+        /// Append per-row time-series sparklines
+        #[arg(long)]
+        spark: bool,
+        /// Render a 7x24 weekday-by-hour activity heatmap
+        #[arg(long)]
+        heatmap: bool,
+        /// Reset stored file offsets and rescan all local logs from byte 0
+        #[arg(long)]
+        rescan: bool,
         /// Add a USD cost column and total line
         #[arg(long)]
         cost: bool,
@@ -469,6 +593,12 @@ pub enum Command {
         /// Summarize current burn rate, exhaustion runway, and next reset
         #[arg(long)]
         runway: bool,
+        /// Delete history snapshots older than DAYS
+        #[arg(long, value_name = "DAYS")]
+        prune: Option<u64>,
+        /// Diff oldest snapshot at/after WHEN (RFC3339 or YYYY-MM-DD) against latest
+        #[arg(long, value_name = "WHEN")]
+        diff: Option<String>,
     },
 
     /// Show config path / effective settings
@@ -476,6 +606,18 @@ pub enum Command {
         /// Dump effective config as TOML
         #[arg(long)]
         dump: bool,
+        /// Print raw config file path (no truncation)
+        #[arg(long)]
+        path: bool,
+        /// Write a starter config.toml template
+        #[arg(long)]
+        init: bool,
+        /// Overwrite existing config.toml with --init
+        #[arg(long)]
+        force: bool,
+        /// Validate config.toml syntax and values
+        #[arg(long)]
+        validate: bool,
     },
 
     /// Interactive TUI

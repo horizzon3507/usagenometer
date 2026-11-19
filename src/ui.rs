@@ -96,19 +96,30 @@ pub fn print_status_opts(snapshots: &[ProviderSnapshot], opts: &StatusOptions<'_
 
 /// One-liner for statuslines: `Codex 42% · Cursor 74%`
 pub fn print_compact(snapshots: &[ProviderSnapshot], display: DisplayMode) {
+    print_compact_ext(snapshots, display, None, None, false);
+}
+
+pub fn format_compact_line(
+    snapshots: &[ProviderSnapshot],
+    display: DisplayMode,
+    template: Option<&str>,
+    cost_suffix: Option<&str>,
+) -> Option<String> {
     let mut parts = Vec::new();
     for snap in snapshots {
         if snap.status != SnapshotStatus::Ok || snap.meters.is_empty() {
             continue;
         }
         let meter = &snap.meters[0];
+        let used_f = meter
+            .percent
+            .or_else(|| meter.left_percent.map(|p| 1.0 - p));
+        let left_f = meter
+            .left_percent
+            .or_else(|| meter.percent.map(|p| 1.0 - p));
         let fraction = match display {
-            DisplayMode::Left => meter
-                .left_percent
-                .or_else(|| meter.percent.map(|p| 1.0 - p)),
-            DisplayMode::Used => meter
-                .percent
-                .or_else(|| meter.left_percent.map(|p| 1.0 - p)),
+            DisplayMode::Left => left_f,
+            DisplayMode::Used => used_f,
         };
         let pct = fraction
             .map(|f| format!("{:.0}%", f * 100.0))
@@ -118,12 +129,67 @@ pub fn print_compact(snapshots: &[ProviderSnapshot], display: DisplayMode) {
             .stale_age_secs
             .map(|a| format!("~{}", fmt_stale(a)))
             .unwrap_or_default();
-        parts.push(format!("{} {pct}{stale}", snap.label));
+        if let Some(tpl) = template {
+            let short = short_provider_code(&snap.id);
+            let used_pct = used_f
+                .map(|f| format!("{:.0}", f * 100.0))
+                .unwrap_or_else(|| "-".into());
+            let left_pct = left_f
+                .map(|f| format!("{:.0}", f * 100.0))
+                .unwrap_or_else(|| "-".into());
+            let reset = format_reset(meter)
+                .trim_start_matches("  ·  reset ")
+                .to_string();
+            let rendered = tpl
+                .replace("{id}", &snap.id)
+                .replace("{label}", &snap.label)
+                .replace("{short}", short)
+                .replace("{pct}", &pct)
+                .replace("{used_pct}", &used_pct)
+                .replace("{left_pct}", &left_pct)
+                .replace("{reset}", &reset)
+                .replace("{stale}", &stale);
+            parts.push(rendered);
+        } else {
+            parts.push(format!("{} {pct}{stale}", snap.label));
+        }
     }
-    if parts.is_empty() {
-        println!("—");
-    } else {
-        println!("{}", parts.join(" · "));
+    if let Some(cost) = cost_suffix.filter(|s| !s.is_empty()) {
+        parts.push(cost.to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+pub fn print_compact_ext(
+    snapshots: &[ProviderSnapshot],
+    display: DisplayMode,
+    template: Option<&str>,
+    cost_suffix: Option<&str>,
+    quiet_empty: bool,
+) {
+    match format_compact_line(snapshots, display, template, cost_suffix) {
+        Some(line) => println!("{line}"),
+        None if !quiet_empty => println!("—"),
+        None => {}
+    }
+}
+
+fn short_provider_code(id: &str) -> &str {
+    match id {
+        "codex" => "cx",
+        "cursor" => "cu",
+        "antigravity" => "ag",
+        "claude" => "cl",
+        "grok" => "gk",
+        "glm" => "gl",
+        "kimi" => "km",
+        "commandcode" => "cc",
+        "opencode-go" => "og",
+        "opencode-zen" => "oz",
+        "devin-cloud" => "dv",
+        "openrouter" => "or",
+        "deepseek" => "ds",
+        other => other,
     }
 }
 
@@ -263,13 +329,13 @@ fn print_meter(meter: &UsageMeter, display: DisplayMode, color: bool, eta: Optio
     }
 }
 
-fn meter_bar(fraction: f64, width: usize) -> String {
+pub(crate) fn meter_bar(fraction: f64, width: usize) -> String {
     let filled = ((fraction.clamp(0.0, 1.0) * width as f64).round() as usize).min(width);
     let empty = width.saturating_sub(filled);
     format!("{}{}", "━".repeat(filled), "─".repeat(empty))
 }
 
-fn format_reset(meter: &UsageMeter) -> String {
+pub(crate) fn format_reset(meter: &UsageMeter) -> String {
     if let Some(reset_at) = meter.reset_at {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -347,19 +413,27 @@ pub fn print_diff(prev: &[ProviderSnapshot], next: &[ProviderSnapshot], display:
             let old_f = meter_fraction(old_m, display);
             let new_f = meter_fraction(meter, display);
             let line = match (old_f, new_f) {
-                (Some(a), Some(b)) if (a - b).abs() >= 0.005 => Some(format!(
-                    "  {} {} {:.0}% → {:.0}%",
-                    snap.label,
-                    meter.title,
-                    a * 100.0,
-                    b * 100.0,
-                )),
+                (Some(a), Some(b)) if (a - b).abs() >= 0.005 => {
+                    let delta = (b - a) * 100.0;
+                    Some(format!(
+                        "  {} {} {:.0}% → {:.0}% ({delta:+.0}%)",
+                        snap.label,
+                        meter.title,
+                        a * 100.0,
+                        b * 100.0,
+                    ))
+                }
                 (None, None) => match (money_value(old_m, display), money_value(meter, display)) {
                     (Some(a), Some(b)) if a != b => {
                         let old = format!("${a:.2}");
                         let new = format!("${b:.2}");
-                        (old != new)
-                            .then(|| format!("  {} {} {old} → {new}", snap.label, meter.title))
+                        let delta = b - a;
+                        (old != new).then(|| {
+                            format!(
+                                "  {} {} {old} → {new} ({delta:+.2})",
+                                snap.label, meter.title
+                            )
+                        })
                     }
                     _ => None,
                 },
@@ -400,4 +474,106 @@ pub(crate) fn money_value(meter: &UsageMeter, display: DisplayMode) -> Option<f6
         DisplayMode::Used => meter.used.or(meter.left),
     }
     .filter(|value| value.is_finite())
+}
+
+/// Render a 7x24 weekday-by-hour activity heatmap (Mon..Sun x 00..23) in local time.
+pub fn print_heatmap(
+    events: &[crate::tokens::TokenEvent],
+    local: time::UtcOffset,
+    cost: bool,
+    overrides: &HashMap<String, crate::pricing::ModelPriceOverride>,
+) {
+    let color = io::stdout().is_terminal();
+    let mut grid = [[0.0f64; 24]; 7];
+    let mut max_val = 0.0f64;
+
+    for ev in events {
+        let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(ev.ts_unix as i64) else {
+            continue;
+        };
+        let ldt = dt.to_offset(local);
+        let row = usize::from(ldt.weekday().number_from_monday() - 1);
+        let col = usize::from(ldt.hour());
+        let val = if cost {
+            crate::pricing::event_cost_usd_merged(ev, overrides).unwrap_or(0.0)
+        } else {
+            (ev.input_tokens + ev.output_tokens + ev.cache_read_tokens + ev.cache_write_tokens)
+                as f64
+        };
+        grid[row][col] += val;
+        if grid[row][col] > max_val {
+            max_val = grid[row][col];
+        }
+    }
+
+    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let hour_hdr = "       00 02 04 06 08 10 12 14 16 18 20 22";
+    if color {
+        println!("{}", hour_hdr.with(DIM));
+    } else {
+        println!("{hour_hdr}");
+    }
+
+    let mut best_day = (0usize, 0.0f64);
+    let mut best_hour = (0usize, 0.0f64);
+    let mut hour_sums = [0.0f64; 24];
+
+    for (r, day) in days.iter().enumerate() {
+        let mut day_sum = 0.0f64;
+        let mut cells = String::with_capacity(48);
+        for (c, cell) in grid[r].iter().enumerate() {
+            day_sum += *cell;
+            hour_sums[c] += *cell;
+            let glyph = if *cell <= 0.0 || max_val <= 0.0 {
+                '·'
+            } else {
+                let ratio = (*cell / max_val).clamp(0.0, 1.0);
+                if ratio < 0.25 {
+                    '░'
+                } else if ratio < 0.50 {
+                    '▒'
+                } else if ratio < 0.75 {
+                    '▓'
+                } else {
+                    '█'
+                }
+            };
+            cells.push(glyph);
+            if c % 2 == 1 {
+                cells.push(' ');
+            }
+        }
+        if day_sum > best_day.1 {
+            best_day = (r, day_sum);
+        }
+        let line = format!("  {day}  {cells}");
+        if color {
+            println!("{}", line.with(GRAY));
+        } else {
+            println!("{line}");
+        }
+    }
+    for (h, &s) in hour_sums.iter().enumerate() {
+        if s > best_hour.1 {
+            best_hour = (h, s);
+        }
+    }
+    println!();
+    if max_val > 0.0 {
+        let peak_desc = if cost {
+            format!(
+                "peak day {} (${:.2}) · peak hour {:02}:00 (${:.2})",
+                days[best_day.0], best_day.1, best_hour.0, best_hour.1
+            )
+        } else {
+            format!(
+                "peak day {} ({} tok) · peak hour {:02}:00 ({} tok)",
+                days[best_day.0],
+                crate::tokens::fmt_num(best_day.1 as u64),
+                best_hour.0,
+                crate::tokens::fmt_num(best_hour.1 as u64),
+            )
+        };
+        print_info(&peak_desc);
+    }
 }

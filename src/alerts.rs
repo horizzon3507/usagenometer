@@ -6,19 +6,22 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::DisplayMode;
 use crate::config::Settings;
 use crate::providers::types::{ProviderSnapshot, SnapshotStatus, UsageMeter};
 use crate::ui::print_warn;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AlertKind {
     UsedPercent,
     Eta,
+    LowBalanceUsd,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AlertEvent {
     pub provider_id: String,
     pub provider_label: String,
@@ -29,6 +32,9 @@ pub struct AlertEvent {
     pub kind: AlertKind,
     /// Seconds until exhaustion when `kind == Eta`.
     pub eta_seconds: Option<f64>,
+    /// Remaining balance in USD when `kind == LowBalanceUsd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_left_usd: Option<f64>,
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -92,11 +98,27 @@ fn alert_key(event: &AlertEvent) -> String {
     let kind = match event.kind {
         AlertKind::UsedPercent => "pct",
         AlertKind::Eta => "eta",
+        AlertKind::LowBalanceUsd => "usd",
     };
     format!("{}/{}/{}", event.provider_id, event.meter_title, kind)
 }
 
-/// Evaluate meters against used-% and optional ETA thresholds.
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn resets_before(meter: &UsageMeter, eta_secs: f64, now: f64) -> bool {
+    let reset_in = meter
+        .reset_at
+        .map(|r| r - now)
+        .or(meter.reset_after_seconds);
+    matches!(reset_in, Some(r) if r > 0.0 && r < eta_secs)
+}
+
+/// Evaluate meters against used-%, low-balance USD, and optional ETA thresholds.
 ///
 /// `etas` maps `"provider_id/meter_id"` → seconds until exhaustion.
 pub fn evaluate(
@@ -105,6 +127,7 @@ pub fn evaluate(
     etas: Option<&HashMap<String, f64>>,
 ) -> Vec<AlertEvent> {
     let mut events = Vec::new();
+    let now = now_secs();
     for snap in snaps {
         if snap.status != SnapshotStatus::Ok {
             continue;
@@ -117,6 +140,26 @@ pub fn evaluate(
                 }
             }
         }
+        if let Some(bal_thr) = settings.alert_balance_for(&snap.id) {
+            for meter in &snap.meters {
+                if meter.unit.eq_ignore_ascii_case("usd")
+                    && let Some(left) = meter.left.filter(|v| v.is_finite())
+                    && left <= bal_thr + f64::EPSILON
+                {
+                    events.push(AlertEvent {
+                        provider_id: snap.id.clone(),
+                        provider_label: snap.label.clone(),
+                        meter_title: meter.title.clone(),
+                        used_pct: 0.0,
+                        threshold: bal_thr,
+                        display: settings.display,
+                        kind: AlertKind::LowBalanceUsd,
+                        eta_seconds: None,
+                        balance_left_usd: Some(left),
+                    });
+                }
+            }
+        }
         if let Some(eta_hours) = settings.alert_eta_hours() {
             let limit_secs = eta_hours.max(0.0) * 3600.0;
             if let Some(map) = etas {
@@ -125,7 +168,7 @@ pub fn evaluate(
                     let Some(&secs) = map.get(&key) else {
                         continue;
                     };
-                    if secs <= limit_secs + f64::EPSILON {
+                    if secs <= limit_secs + f64::EPSILON && !resets_before(meter, secs, now) {
                         let used = meter
                             .percent
                             .or_else(|| meter.left_percent.map(|lp| 1.0 - lp))
@@ -140,6 +183,7 @@ pub fn evaluate(
                             display: settings.display,
                             kind: AlertKind::Eta,
                             eta_seconds: Some(secs),
+                            balance_left_usd: None,
                         });
                     }
                 }
@@ -180,7 +224,43 @@ fn check_meter(
         display,
         kind: AlertKind::UsedPercent,
         eta_seconds: None,
+        balance_left_usd: None,
     })
+}
+
+pub fn format_alert_message(ev: &AlertEvent) -> String {
+    match ev.kind {
+        AlertKind::Eta => {
+            let eta = ev
+                .eta_seconds
+                .map(crate::eta::format_eta)
+                .unwrap_or_else(|| "~?".into());
+            format!(
+                "ALERT {} · {} ETA {} (threshold {:.1}h)",
+                ev.provider_label, ev.meter_title, eta, ev.threshold
+            )
+        }
+        AlertKind::LowBalanceUsd => format!(
+            "ALERT {} · {} balance ${:.2} (threshold ${:.2})",
+            ev.provider_label,
+            ev.meter_title,
+            ev.balance_left_usd.unwrap_or(0.0),
+            ev.threshold
+        ),
+        AlertKind::UsedPercent => match ev.display {
+            DisplayMode::Used => format!(
+                "ALERT {} · {} at {:.0}% used (threshold {:.0}%)",
+                ev.provider_label, ev.meter_title, ev.used_pct, ev.threshold
+            ),
+            DisplayMode::Left => format!(
+                "ALERT {} · {} at {:.0}% left (threshold {:.0}% used)",
+                ev.provider_label,
+                ev.meter_title,
+                100.0 - ev.used_pct,
+                ev.threshold
+            ),
+        },
+    }
 }
 
 pub fn print_alerts(events: &[AlertEvent], quiet: bool) {
@@ -188,31 +268,7 @@ pub fn print_alerts(events: &[AlertEvent], quiet: bool) {
         return;
     }
     for ev in events {
-        let msg = match ev.kind {
-            AlertKind::Eta => {
-                let eta = ev
-                    .eta_seconds
-                    .map(crate::eta::format_eta)
-                    .unwrap_or_else(|| "~?".into());
-                format!(
-                    "ALERT {} · {} ETA {} (threshold {:.1}h)",
-                    ev.provider_label, ev.meter_title, eta, ev.threshold
-                )
-            }
-            AlertKind::UsedPercent => match ev.display {
-                DisplayMode::Used => format!(
-                    "ALERT {} · {} at {:.0}% used (threshold {:.0}%)",
-                    ev.provider_label, ev.meter_title, ev.used_pct, ev.threshold
-                ),
-                DisplayMode::Left => format!(
-                    "ALERT {} · {} at {:.0}% left (threshold {:.0}% used)",
-                    ev.provider_label,
-                    ev.meter_title,
-                    100.0 - ev.used_pct,
-                    ev.threshold
-                ),
-            },
-        };
+        let msg = format_alert_message(ev);
         if quiet {
             eprintln!("! {msg}");
         } else {
@@ -236,6 +292,12 @@ pub fn maybe_notify(events: &[AlertEvent], enabled: bool) {
                     .unwrap_or_else(|| "~?".into());
                 format!("{} {}: ETA {}", ev.provider_label, ev.meter_title, eta)
             }
+            AlertKind::LowBalanceUsd => format!(
+                "{} {}: ${:.2} remaining",
+                ev.provider_label,
+                ev.meter_title,
+                ev.balance_left_usd.unwrap_or(0.0)
+            ),
             AlertKind::UsedPercent => format!(
                 "{} {}: {:.0}% used",
                 ev.provider_label, ev.meter_title, ev.used_pct
@@ -268,6 +330,50 @@ pub fn maybe_notify_recoveries(recovered: &[String], enabled: bool) {
         .output();
 }
 
+/// Fire configured webhook URL and/or shell command on alert state transitions.
+pub fn dispatch_hooks(transitions: &AlertReconciliation, settings: &Settings) {
+    if transitions.new_events.is_empty() && transitions.recovered.is_empty() {
+        return;
+    }
+    if let Some(url) = settings
+        .config
+        .notify_webhook_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        && let Ok(client) = crate::http::HttpClient::new()
+    {
+        let payload = serde_json::json!({
+            "source": "usagenometer",
+            "new_events": transitions.new_events,
+            "recovered": transitions.recovered,
+        });
+        let _ = client.post_json::<serde_json::Value>(url, &payload, &[]);
+    }
+    if let Some(cmd) = settings
+        .config
+        .notify_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let mut lines: Vec<String> = transitions
+            .new_events
+            .iter()
+            .map(format_alert_message)
+            .collect();
+        for r in &transitions.recovered {
+            lines.push(format!("RECOVERED {r}"));
+        }
+        let summary = lines.join("\n");
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .env("USG_ALERT_SUMMARY", summary)
+            .output();
+    }
+}
+
 /// Track which alerts already fired this process (provider/meter/kind) to avoid spam in watch.
 pub struct AlertTracker {
     fired: std::collections::HashSet<String>,
@@ -281,16 +387,11 @@ impl AlertTracker {
     }
 
     pub fn filter_new(&mut self, events: Vec<AlertEvent>) -> Vec<AlertEvent> {
+        let active: std::collections::HashSet<String> = events.iter().map(alert_key).collect();
+        self.fired.retain(|k| active.contains(k));
         events
             .into_iter()
-            .filter(|ev| {
-                let kind = match ev.kind {
-                    AlertKind::UsedPercent => "pct",
-                    AlertKind::Eta => "eta",
-                };
-                let key = format!("{}/{}/{}", ev.provider_id, ev.meter_title, kind);
-                self.fired.insert(key)
-            })
+            .filter(|ev| self.fired.insert(alert_key(ev)))
             .collect()
     }
 }
@@ -314,16 +415,21 @@ mod tests {
             display: DisplayMode::Used,
             quiet: true,
             compact: false,
+            compact_cost: false,
+            template: None,
             privacy: false,
             json: false,
             pretty: false,
             format: None,
             alert: Some(thr),
             alert_eta: None,
+            alert_balance_usd: None,
             notify: false,
             cache_ttl: 300,
             history: true,
             watch_interval: 60,
+            profile: None,
+            active_project_config: None,
             config: ConfigFile::default(),
         }
     }
@@ -336,16 +442,21 @@ mod tests {
             display: DisplayMode::Used,
             quiet: true,
             compact: false,
+            compact_cost: false,
+            template: None,
             privacy: false,
             json: false,
             pretty: false,
             format: None,
             alert: None,
             alert_eta: Some(hours),
+            alert_balance_usd: None,
             notify: false,
             cache_ttl: 300,
             history: true,
             watch_interval: 60,
+            profile: None,
+            active_project_config: None,
             config: ConfigFile::default(),
         }
     }
@@ -408,6 +519,7 @@ mod tests {
             display: DisplayMode::Used,
             kind: AlertKind::UsedPercent,
             eta_seconds: None,
+            balance_left_usd: None,
         };
         let mut first = AlertStateStore::open_at(path.clone());
         assert_eq!(first.reconcile(vec![event.clone()]).new_events.len(), 1);
@@ -416,5 +528,48 @@ mod tests {
         let recovered = second.reconcile(vec![]);
         assert_eq!(recovered.recovered.len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn low_balance_usd_and_reset_before_eta_suppression() {
+        let mut snap = ProviderSnapshot::ok("fx", "fx");
+        snap.meters.push(crate::providers::types::create_meter(
+            "credits",
+            "Gateway credits",
+            None,
+            None,
+            Some(8.0),
+            Some(1.5),
+            None,
+            "usd",
+            None,
+            None,
+            None,
+        ));
+        let mut s = settings_alert(80.0);
+        s.alert_balance_usd = Some(2.0);
+        let events = evaluate(&[snap], &s, None);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, AlertKind::LowBalanceUsd);
+
+        // Meter resets in 900s while ETA is 1800s -> suppress false ETA alarm.
+        let mut snap2 = ProviderSnapshot::ok("codex", "Codex");
+        snap2.meters.push(crate::providers::types::create_meter(
+            "5h",
+            "5 hour",
+            Some(0.6),
+            Some(0.4),
+            None,
+            None,
+            None,
+            "percent",
+            None,
+            Some(900.0),
+            None,
+        ));
+        let mut etas = HashMap::new();
+        etas.insert("codex/5h".into(), 1800.0);
+        let eta_events = evaluate(&[snap2], &settings_eta(1.0), Some(&etas));
+        assert!(eta_events.is_empty());
     }
 }

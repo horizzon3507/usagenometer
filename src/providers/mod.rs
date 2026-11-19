@@ -252,6 +252,13 @@ pub fn provider_label(id: &str) -> &'static str {
         "devin-cloud" => "Devin Cloud",
         "fx" => "fx",
         "gemini" => "Gemini",
+        "openrouter" => "OpenRouter",
+        "deepseek" => "DeepSeek",
+        "windsurf" => "Windsurf",
+        "cline" => "Cline",
+        "roo-code" => "Roo Code",
+        "aider" => "Aider",
+        "goose" => "Goose",
         _ => "Unknown",
     }
 }
@@ -279,61 +286,97 @@ pub fn fetch_all_cached(
     record_history: bool,
     selection: AgentSelection,
 ) -> Vec<ProviderSnapshot> {
+    fetch_all_cached_with_profile(filter, cache_ttl, record_history, selection, None, None)
+}
+
+pub fn fetch_all_cached_with_profile(
+    filter: &[ProviderArg],
+    cache_ttl: u64,
+    record_history: bool,
+    selection: AgentSelection,
+    profile: Option<&str>,
+    shared_client: Option<&HttpClient>,
+) -> Vec<ProviderSnapshot> {
     let candidates = if filter.is_empty() && selection == AgentSelection::All {
         ProviderArg::catalog().iter().map(|p| p.id()).collect()
     } else {
         resolve_providers(filter)
     };
     let ids = selected_ids(&candidates, selection);
-    let client = HttpClient::new().ok();
-    let cache = SnapshotCache::new(cache_ttl.max(1));
+    let owned_client = if shared_client.is_none() {
+        HttpClient::new().ok()
+    } else {
+        None
+    };
+    let client = shared_client.or(owned_client.as_ref());
+    let cache = SnapshotCache::with_profile(cache_ttl.max(1), profile);
     let history = if record_history {
         HistoryStore::open().ok()
     } else {
         None
     };
 
-    ids.into_iter()
-        .map(|id| {
-            // Prompt/statusline and scripted consumers must not open five
-            // network connections for every render. A fresh cache is a valid
-            // snapshot; a cache after a failed fetch remains explicitly stale.
-            if cache_ttl > 0 {
-                if let Some(snap) = cache.load_fresh(id) {
-                    return snap;
-                }
+    let mut results: Vec<Option<ProviderSnapshot>> = vec![None; ids.len()];
+    let mut misses: Vec<(usize, &'static str)> = Vec::new();
+    for (idx, &id) in ids.iter().enumerate() {
+        if cache_ttl > 0
+            && let Some(snap) = cache.load_fresh(id)
+        {
+            results[idx] = Some(snap);
+            continue;
+        }
+        misses.push((idx, id));
+    }
+
+    let fetched: Vec<(usize, &'static str, ProviderSnapshot)> = std::thread::scope(|s| {
+        let handles: Vec<_> = misses
+            .into_iter()
+            .map(|(idx, id)| {
+                s.spawn(move || {
+                    let t0 = std::time::Instant::now();
+                    let mut snap = fetch_one(id, client);
+                    snap.latency_ms = Some(t0.elapsed().as_millis() as u64);
+                    (idx, id, snap)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("provider fetch thread panicked"))
+            .collect()
+    });
+
+    for (idx, id, mut snap) in fetched {
+        let final_snap = if snap.status == SnapshotStatus::Ok {
+            snap.stale_age_secs = None;
+            let _ = cache.save(&snap);
+            if let Some(h) = history.as_ref() {
+                let _ = h.record(&snap);
             }
-            let mut snap = fetch_one(id, client.as_ref());
-            if snap.status == SnapshotStatus::Ok {
-                snap.stale_age_secs = None;
-                let _ = cache.save(&snap);
-                if let Some(h) = history.as_ref() {
-                    let _ = h.record(&snap);
+            snap
+        } else if snap.status == SnapshotStatus::Auth {
+            let _ = cache.invalidate(id);
+            snap
+        } else {
+            let max_stale = cache_ttl.max(60).saturating_mul(48).max(3600);
+            if let Some((cached, age)) = cache.load(id)
+                && age <= max_stale
+            {
+                let mut s = cached;
+                s.status = SnapshotStatus::Ok;
+                s.stale_age_secs = Some(age);
+                if let Some(err) = snap.error.clone() {
+                    s.error = Some(format!("stale fallback ({err})"));
                 }
-                snap
-            } else if snap.status == SnapshotStatus::Auth {
-                let _ = cache.invalidate(id);
-                snap
+                s
             } else {
-                // Prefer last-good meters over a bare error when cache exists.
-                // Accept stale up to max(ttl, 24h) so a short TTL still helps briefly.
-                let max_stale = cache_ttl.max(60).saturating_mul(48).max(3600);
-                if let Some((cached, age)) = cache.load(id)
-                    && age <= max_stale
-                {
-                    let mut s = cached;
-                    s.status = SnapshotStatus::Ok;
-                    s.stale_age_secs = Some(age);
-                    if let Some(err) = snap.error.clone() {
-                        s.error = Some(format!("stale fallback ({err})"));
-                    }
-                    s
-                } else {
-                    snap
-                }
+                snap
             }
-        })
-        .collect()
+        };
+        results[idx] = Some(final_snap);
+    }
+
+    results.into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -401,7 +444,16 @@ pub fn fetch_one(id: &str, client: Option<&HttpClient>) -> ProviderSnapshot {
             Some(c) => opencode::fetch_zen(c),
             None => http_unavailable(id),
         },
-        "omp" | "opencode" | "droid" | "pi" | "devin-local" | "gemini" => {
+        "openrouter" => match client {
+            Some(c) => openrouter::fetch(c),
+            None => http_unavailable(id),
+        },
+        "deepseek" => match client {
+            Some(c) => deepseek::fetch(c),
+            None => http_unavailable(id),
+        },
+        "omp" | "opencode" | "droid" | "pi" | "devin-local" | "gemini" | "windsurf" | "cline"
+        | "roo-code" | "aider" | "goose" => {
             let mut snap = ProviderSnapshot::ok(id, provider_label(id));
             snap.error = Some(format!("token ledger only — see usg tokens -p {id}"));
             snap

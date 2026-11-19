@@ -9,7 +9,8 @@ use crate::paths;
 use crate::privacy;
 use crate::ui::{BRIGHT, DIM, GRAY, WHITE};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CheckStatus {
     Pass,
     Fail,
@@ -17,7 +18,7 @@ pub enum CheckStatus {
     Skip,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Check {
     pub status: CheckStatus,
     pub name: String,
@@ -51,6 +52,44 @@ pub fn run(privacy: bool) -> Vec<Check> {
         "opencode-zen auth",
         crate::providers::opencode::auth_description_zen(),
     ));
+    for id in [
+        "glm",
+        "kimi",
+        "openrouter",
+        "deepseek",
+        "opencode",
+        "omp",
+        "droid",
+        "pi",
+        "gemini",
+        "devin-local",
+        "windsurf",
+        "cline",
+        "roo-code",
+        "aider",
+        "goose",
+    ] {
+        let state = crate::providers::availability::inspect(id);
+        let status = if state.ready() {
+            CheckStatus::Pass
+        } else if !state.installed {
+            CheckStatus::Skip
+        } else {
+            CheckStatus::Warn
+        };
+        let detail = if state.ready() {
+            format!("ready ({})", state.credentials)
+        } else if !state.installed {
+            "not installed".into()
+        } else {
+            format!("{} — {}", state.credentials, state.setup)
+        };
+        checks.push(Check {
+            status,
+            name: format!("{id} auth"),
+            detail,
+        });
+    }
     checks.extend(check_xdg());
     checks.extend(check_token_ledger());
     checks
@@ -123,21 +162,54 @@ impl StyleExt for str {
 }
 
 fn check_xdg() -> Vec<Check> {
-    let mut out = vec![
+    let cfg_path = paths::config_file();
+    let cfg_check = if !cfg_path.exists() {
         Check {
-            status: CheckStatus::Pass,
+            status: CheckStatus::Skip,
             name: "config path".into(),
-            detail: paths::display_path(&paths::config_file()),
-        },
+            detail: format!("{} (using defaults)", paths::display_path(&cfg_path)),
+        }
+    } else {
+        match crate::config::ConfigFile::load_from(&cfg_path) {
+            Ok(cfg) => {
+                let errs = cfg.validate();
+                if errs.is_empty() {
+                    Check {
+                        status: CheckStatus::Pass,
+                        name: "config path".into(),
+                        detail: format!("{} (valid TOML)", paths::display_path(&cfg_path)),
+                    }
+                } else {
+                    Check {
+                        status: CheckStatus::Warn,
+                        name: "config path".into(),
+                        detail: format!("{} ({})", paths::display_path(&cfg_path), errs[0]),
+                    }
+                }
+            }
+            Err(e) => Check {
+                status: CheckStatus::Fail,
+                name: "config path".into(),
+                detail: format!("invalid TOML in {}: {e}", paths::display_path(&cfg_path)),
+            },
+        }
+    };
+    let db_path = paths::history_db();
+    let db_size = fs::metadata(&db_path)
+        .map(|m| format!(" ({})", fmt_bytes(m.len())))
+        .unwrap_or_default();
+    let cache_path = paths::cache_dir();
+    let mut out = vec![
+        cfg_check,
         Check {
             status: CheckStatus::Pass,
             name: "history db".into(),
-            detail: paths::display_path(&paths::history_db()),
+            detail: format!("{}{db_size}", paths::display_path(&db_path)),
         },
         Check {
             status: CheckStatus::Pass,
             name: "cache dir".into(),
-            detail: paths::display_path(&paths::cache_dir()),
+            detail: paths::display_path(&cache_path),
         },
     ];
     out.push(match crate::tokens::TokenStore::open() {
@@ -153,6 +225,62 @@ fn check_xdg() -> Vec<Check> {
         },
     });
     out
+}
+
+fn fmt_bytes(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Apply safe, non-destructive local repairs (`usg doctor --fix`).
+pub fn run_fixes() -> Vec<String> {
+    let mut actions = Vec::new();
+    if paths::ensure_app_dirs().is_ok() {
+        actions.push("ensured XDG config/data/cache directories".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let cred_files = [
+            codex_auth_path(),
+            claude_credentials_path(),
+            home.join(".commandcode/auth.json"),
+            home.join(".fx/api-key"),
+            home.join(".config/openrouter/api-key"),
+            home.join(".config/deepseek/api-key"),
+        ];
+        for path in cred_files {
+            if let Ok(meta) = fs::metadata(&path)
+                && meta.is_file()
+            {
+                let mode = meta.permissions().mode() & 0o777;
+                if mode & 0o077 != 0
+                    && fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).is_ok()
+                {
+                    actions.push(format!("restricted {} to 0600", paths::display_path(&path)));
+                }
+            }
+        }
+    }
+    if let Ok(store) = crate::tokens::TokenStore::open() {
+        if let Ok(pruned) = store.prune_dead_offsets()
+            && pruned > 0
+        {
+            actions.push(format!("pruned {pruned} dead token scan offset(s)"));
+        }
+        if store.last_scan_unix().ok().flatten().is_none()
+            && let Ok(n) = crate::tokens::scan_all(crate::tokens::collect::known_providers())
+        {
+            actions.push(format!("ran initial token ledger scan ({n} events)"));
+        }
+    }
+    actions
 }
 
 fn check_codex(privacy: bool) -> Vec<Check> {
@@ -494,6 +622,16 @@ fn token_expiry_check(name: &str, token: &str) -> Check {
                     status: CheckStatus::Fail,
                     name: name.into(),
                     detail: "expired (or within 30s) — re-login".into(),
+                }
+            } else if exp < now + 3600.0 {
+                let left = exp - now;
+                Check {
+                    status: CheckStatus::Warn,
+                    name: name.into(),
+                    detail: format!(
+                        "expiring soon · {} left",
+                        crate::ui::fmt_duration_secs(left as u64)
+                    ),
                 }
             } else {
                 let left = exp - now;

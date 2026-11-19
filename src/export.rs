@@ -1,13 +1,23 @@
 //! Export formats + scripting exit codes.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 use anyhow::Result;
 
+use crate::cli::DisplayMode;
+use crate::pricing::ModelPriceOverride;
 use crate::providers::types::{ProviderSnapshot, SnapshotStatus};
 
 /// Prometheus text exposition for meters.
 pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
+    emit_prometheus_with_pricing(snaps, &HashMap::new())
+}
+
+pub fn emit_prometheus_with_pricing(
+    snaps: &[ProviderSnapshot],
+    overrides: &HashMap<String, ModelPriceOverride>,
+) -> Result<()> {
     let mut out = io::stdout().lock();
     writeln!(
         out,
@@ -21,6 +31,31 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
     writeln!(out, "# TYPE usagenometer_left_ratio gauge")?;
     writeln!(out, "# HELP usagenometer_up Provider fetch success (1=ok).")?;
     writeln!(out, "# TYPE usagenometer_up gauge")?;
+    writeln!(
+        out,
+        "# HELP usagenometer_meter_used Raw used value for a meter."
+    )?;
+    writeln!(out, "# TYPE usagenometer_meter_used gauge")?;
+    writeln!(
+        out,
+        "# HELP usagenometer_meter_left Raw remaining value for a meter."
+    )?;
+    writeln!(out, "# TYPE usagenometer_meter_left gauge")?;
+    writeln!(
+        out,
+        "# HELP usagenometer_meter_limit Raw limit value for a meter."
+    )?;
+    writeln!(out, "# TYPE usagenometer_meter_limit gauge")?;
+    writeln!(
+        out,
+        "# HELP usagenometer_reset_unixtime Unix timestamp when quota resets."
+    )?;
+    writeln!(out, "# TYPE usagenometer_reset_unixtime gauge")?;
+    writeln!(
+        out,
+        "# HELP usagenometer_snapshot_stale_age_seconds Age of stale fallback snapshot (0 when live)."
+    )?;
+    writeln!(out, "# TYPE usagenometer_snapshot_stale_age_seconds gauge")?;
 
     for snap in snaps {
         let up = if snap.status == SnapshotStatus::Ok {
@@ -33,6 +68,12 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
             "usagenometer_up{{provider=\"{}\"}} {}",
             escape_label(&snap.id),
             up
+        )?;
+        writeln!(
+            out,
+            "usagenometer_snapshot_stale_age_seconds{{provider=\"{}\"}} {}",
+            escape_label(&snap.id),
+            snap.stale_age_secs.unwrap_or(0)
         )?;
         if snap.status != SnapshotStatus::Ok {
             continue;
@@ -50,17 +91,31 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
                 escape_label(&meter.id),
                 escape_label(&meter.title)
             );
+            let unit_norm = meter.unit.to_ascii_lowercase();
+            let unit_labels = format!("{labels},unit=\"{}\"", escape_label(&unit_norm));
             if let Some(u) = used {
                 writeln!(out, "usagenometer_used_ratio{{{labels}}} {u}")?;
             }
             if let Some(l) = left {
                 writeln!(out, "usagenometer_left_ratio{{{labels}}} {l}")?;
             }
+            if let Some(u) = meter.used {
+                writeln!(out, "usagenometer_meter_used{{{unit_labels}}} {u}")?;
+            }
+            if let Some(l) = meter.left {
+                writeln!(out, "usagenometer_meter_left{{{unit_labels}}} {l}")?;
+            }
+            if let Some(lim) = meter.limit {
+                writeln!(out, "usagenometer_meter_limit{{{unit_labels}}} {lim}")?;
+            }
+            if let Some(reset_at) = meter.reset_at {
+                writeln!(out, "usagenometer_reset_unixtime{{{labels}}} {reset_at}")?;
+            }
         }
     }
 
     crate::tokens::scan_all(crate::tokens::collect::known_providers())?;
-    emit_token_metrics(&mut out)?;
+    emit_token_metrics_with_pricing(&mut out, overrides)?;
     Ok(())
 }
 
@@ -74,6 +129,13 @@ pub fn emit_prometheus(snaps: &[ProviderSnapshot]) -> Result<()> {
 /// Emits the HELP/TYPE headers always and samples only for data present —
 /// a store that never opens still produces a valid (header-only) section.
 pub fn emit_token_metrics(out: &mut impl Write) -> io::Result<()> {
+    emit_token_metrics_with_pricing(out, &HashMap::new())
+}
+
+pub fn emit_token_metrics_with_pricing(
+    out: &mut impl Write,
+    overrides: &HashMap<String, ModelPriceOverride>,
+) -> io::Result<()> {
     writeln!(
         out,
         "# HELP usagenometer_tokens_total Cumulative agent tokens recorded in the local ledger."
@@ -86,6 +148,11 @@ pub fn emit_token_metrics(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "# TYPE usagenometer_token_events_total counter")?;
     writeln!(
         out,
+        "# HELP usagenometer_cost_usd_total Estimated cumulative USD cost per provider/model."
+    )?;
+    writeln!(out, "# TYPE usagenometer_cost_usd_total counter")?;
+    writeln!(
+        out,
         "# HELP usagenometer_tokens_last_scan_unixtime Unix time of the last completed ledger scan."
     )?;
     writeln!(out, "# TYPE usagenometer_tokens_last_scan_unixtime gauge")?;
@@ -96,15 +163,25 @@ pub fn emit_token_metrics(out: &mut impl Write) -> io::Result<()> {
     let totals = store.totals().unwrap_or_default();
     let counts = store.provider_event_counts().unwrap_or_default();
     let last = store.last_scan_unix().ok().flatten();
-    write_token_metrics(out, &totals, &counts, last)
+    write_token_metrics_with_pricing(out, &totals, &counts, last, overrides)
 }
 
-/// Sample emission for token metrics — pure for tests.
+#[cfg_attr(not(test), allow(dead_code))]
 fn write_token_metrics(
     out: &mut impl Write,
     totals: &[crate::tokens::TokenTotals],
     counts: &[(String, u64)],
     last_scan: Option<f64>,
+) -> io::Result<()> {
+    write_token_metrics_with_pricing(out, totals, counts, last_scan, &HashMap::new())
+}
+
+fn write_token_metrics_with_pricing(
+    out: &mut impl Write,
+    totals: &[crate::tokens::TokenTotals],
+    counts: &[(String, u64)],
+    last_scan: Option<f64>,
+    overrides: &HashMap<String, ModelPriceOverride>,
 ) -> io::Result<()> {
     for t in totals {
         let base = format!(
@@ -123,6 +200,16 @@ fn write_token_metrics(
                 "usagenometer_tokens_total{{{base},kind=\"{kind}\"}} {value}"
             )?;
         }
+        if let Some(model) = t.model.as_deref()
+            && let Some(p) = crate::pricing::price_for_merged(model, overrides)
+        {
+            let usd = (t.input_tokens as f64 * p.input
+                + t.output_tokens as f64 * p.output
+                + t.cache_read_tokens as f64 * p.cache_read
+                + t.cache_write_tokens as f64 * p.cache_write)
+                / 1_000_000.0;
+            writeln!(out, "usagenometer_cost_usd_total{{{base}}} {usd:.6}")?;
+        }
     }
     for (provider, count) in counts {
         writeln!(
@@ -136,6 +223,146 @@ fn write_token_metrics(
         writeln!(out, "usagenometer_tokens_last_scan_unixtime {last}")?;
     }
     Ok(())
+}
+
+/// Emit single-line Waybar JSON: `{"text","tooltip","class","percentage"}`.
+pub fn emit_waybar(
+    snaps: &[ProviderSnapshot],
+    display: DisplayMode,
+    alert_for: impl Fn(&str) -> Option<f64>,
+    etas: Option<&HashMap<String, String>>,
+    template: Option<&str>,
+    cost_suffix: Option<&str>,
+) -> Result<()> {
+    let text = crate::ui::format_compact_line(snaps, display, template, cost_suffix)
+        .unwrap_or_else(|| "—".into());
+    let mut tooltip_lines = Vec::new();
+    let mut worst_used_pct: f64 = 0.0;
+    let mut has_pct = false;
+    let mut class = "normal";
+
+    for snap in snaps {
+        if snap.status != SnapshotStatus::Ok {
+            continue;
+        }
+        let mut header = snap.label.clone();
+        if let Some(plan) = snap.plan.as_deref().filter(|s| !s.is_empty()) {
+            header.push_str(&format!(" ({plan})"));
+        }
+        if let Some(age) = snap.stale_age_secs {
+            header.push_str(&format!(" [stale {}m]", age / 60));
+        }
+        tooltip_lines.push(header);
+        let warn_thr = alert_for(&snap.id);
+        for m in &snap.meters {
+            let used = m.percent.or_else(|| m.left_percent.map(|lp| 1.0 - lp));
+            let left = m.left_percent.or_else(|| m.percent.map(|p| 1.0 - p));
+            let shown_f = match display {
+                DisplayMode::Left => left,
+                DisplayMode::Used => used,
+            };
+            let val = shown_f
+                .map(|f| format!("{:.0}%", f * 100.0))
+                .or_else(|| crate::ui::money_value(m, display).map(|v| format!("${v:.2}")))
+                .unwrap_or_else(|| "—".into());
+            let reset = crate::ui::format_reset(m);
+            let eta = etas
+                .and_then(|map| map.get(&format!("{}/{}", snap.id, m.id)))
+                .map(|e| format!("  ·  eta {e}"))
+                .unwrap_or_default();
+            tooltip_lines.push(format!("  {}: {val}{reset}{eta}", m.title));
+
+            if let Some(u) = used {
+                let u_pct = if u <= 1.0 { u * 100.0 } else { u };
+                has_pct = true;
+                if u_pct > worst_used_pct {
+                    worst_used_pct = u_pct;
+                }
+                if u_pct >= 95.0 {
+                    class = "critical";
+                } else if class != "critical" && warn_thr.is_some_and(|t| u_pct + f64::EPSILON >= t)
+                {
+                    class = "warning";
+                }
+            }
+        }
+    }
+
+    let percentage = if has_pct {
+        match display {
+            DisplayMode::Used => worst_used_pct.round().clamp(0.0, 100.0) as u64,
+            DisplayMode::Left => (100.0 - worst_used_pct).round().clamp(0.0, 100.0) as u64,
+        }
+    } else {
+        0
+    };
+
+    let payload = serde_json::json!({
+        "text": text,
+        "tooltip": tooltip_lines.join("\n"),
+        "class": class,
+        "percentage": percentage,
+    });
+    println!("{}", serde_json::to_string(&payload)?);
+    Ok(())
+}
+
+/// `(provider, group keys) -> (cost_usd, unpriced_events)`
+pub type GroupCostMap = HashMap<(String, Vec<String>), (f64, usize)>;
+
+/// Emit grouped token rows as RFC 4180 CSV.
+pub fn emit_tokens_csv(
+    rows: &[crate::tokens::GroupRow],
+    dim_names: &[String],
+    costs: Option<&GroupCostMap>,
+) -> Result<()> {
+    let mut out = io::stdout().lock();
+    let mut headers: Vec<&str> = vec!["provider"];
+    for d in dim_names {
+        headers.push(d.as_str());
+    }
+    headers.extend([
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "total_tokens",
+    ]);
+    if costs.is_some() {
+        headers.extend(["cost_usd", "unpriced_events"]);
+    }
+    writeln!(out, "{}", headers.join(","))?;
+    for row in rows {
+        let mut fields = vec![csv_escape(&row.provider)];
+        for k in &row.keys {
+            fields.push(csv_escape(k));
+        }
+        fields.extend([
+            row.totals.input.to_string(),
+            row.totals.output.to_string(),
+            row.totals.cache_read.to_string(),
+            row.totals.cache_write.to_string(),
+            row.totals.total().to_string(),
+        ]);
+        if let Some(cost_map) = costs {
+            let (usd, unpriced) = cost_map
+                .get(&(row.provider.clone(), row.keys.clone()))
+                .copied()
+                .unwrap_or_default();
+            fields.push(format!("{usd:.6}"));
+            fields.push(unpriced.to_string());
+        }
+        writeln!(out, "{}", fields.join(","))?;
+    }
+    Ok(())
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
 }
 
 fn escape_label(s: &str) -> String {
@@ -158,6 +385,17 @@ pub struct CheckReport {
 /// Check whether verifiable quota meters remain at least `fail_under` percent.
 /// A meter exactly at the threshold passes; unavailable providers cannot prove a pass.
 pub fn check_fail_under(snaps: &[ProviderSnapshot], fail_under: f64) -> CheckReport {
+    check_fail_under_ext(snaps, fail_under, None, None, None)
+}
+
+/// Extended quota + USD balance + ETA gate.
+pub fn check_fail_under_ext(
+    snaps: &[ProviderSnapshot],
+    fail_under: f64,
+    min_balance_usd: Option<f64>,
+    etas: Option<&HashMap<String, f64>>,
+    fail_eta_hours: Option<f64>,
+) -> CheckReport {
     let thr = fail_under.clamp(0.0, 100.0);
     let mut messages = Vec::new();
     let mut breached = false;
@@ -202,18 +440,42 @@ pub fn check_fail_under(snaps: &[ProviderSnapshot], fail_under: f64) -> CheckRep
                     .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
                     .map(|left| if left <= 1.0 { left * 100.0 } else { left })
             });
-            let Some(left_pct) = left_pct else {
-                continue;
-            };
-            has_quota = true;
-            let breached_threshold = used_pct
-                .map(|used| used > 100.0 - thr)
-                .unwrap_or(left_pct < thr);
-            if breached_threshold {
+            if let Some(left_pct) = left_pct {
+                has_quota = true;
+                let breached_threshold = used_pct
+                    .map(|used| used > 100.0 - thr)
+                    .unwrap_or(left_pct < thr);
+                if breached_threshold {
+                    breached = true;
+                    messages.push(format!(
+                        "{provider} · {} at {:.0}% remaining (fail-under {:.0}%)",
+                        meter.title, left_pct, thr
+                    ));
+                }
+            } else if let Some(min_usd) = min_balance_usd
+                && meter.unit.eq_ignore_ascii_case("usd")
+                && let Some(left_usd) = meter.left.filter(|v| v.is_finite())
+            {
+                has_quota = true;
+                if left_usd < min_usd {
+                    breached = true;
+                    messages.push(format!(
+                        "{provider} · {} at ${left_usd:.2} remaining (min-balance-usd ${min_usd:.2})",
+                        meter.title
+                    ));
+                }
+            }
+            if let Some(eta_limit_h) = fail_eta_hours
+                && let Some(eta_map) = etas
+                && let Some(&eta_secs) = eta_map.get(&format!("{}/{}", snap.id, meter.id))
+                && eta_secs <= eta_limit_h.max(0.0) * 3600.0 + f64::EPSILON
+            {
                 breached = true;
                 messages.push(format!(
-                    "{provider} · {} at {:.0}% remaining (fail-under {:.0}%)",
-                    meter.title, left_pct, thr
+                    "{provider} · {} exhaustion ETA {} (fail-eta-hours {:.1}h)",
+                    meter.title,
+                    crate::eta::format_eta(eta_secs),
+                    eta_limit_h
                 ));
             }
         }

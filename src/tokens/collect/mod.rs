@@ -2,8 +2,10 @@
 //! cheap: missing dirs yield zero events, malformed lines are skipped, and a
 //! bad file never fails the whole scan.
 
+pub mod aider;
 pub mod antigravity;
 pub mod claude;
+pub mod cline;
 pub mod codex;
 pub mod commandcode;
 pub mod cursor;
@@ -12,6 +14,7 @@ pub mod droid;
 pub mod fx;
 pub mod gemini;
 pub mod glm;
+pub mod goose;
 pub mod grok;
 pub mod kimi;
 pub mod omp;
@@ -19,9 +22,6 @@ pub mod opencode;
 pub mod pi;
 mod util;
 pub mod windsurf;
-pub mod cline;
-pub mod aider;
-pub mod goose;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -46,6 +46,11 @@ pub fn known_providers() -> &'static [&'static str] {
         "kimi",
         "devin-local",
         "fx",
+        "windsurf",
+        "cline",
+        "roo-code",
+        "aider",
+        "goose",
     ]
 }
 
@@ -68,6 +73,11 @@ pub fn scan_provider_files(provider: &str) -> Vec<TokenEvent> {
         "kimi" => kimi::scan(),
         "devin-local" => devin_local::scan(),
         "fx" => fx::scan(),
+        "windsurf" => windsurf::scan(),
+        "cline" => cline::scan_cline(),
+        "roo-code" => cline::scan_roo(),
+        "aider" => aider::scan(),
+        "goose" => goose::scan(),
         _ => Vec::new(),
     }
 }
@@ -90,6 +100,11 @@ pub fn scan_roots(provider: &str) -> Vec<PathBuf> {
         "kimi" => kimi::scan_roots(),
         "devin-local" => devin_local::scan_roots(),
         "fx" => fx::scan_roots(),
+        "windsurf" => windsurf::scan_roots(),
+        "cline" => cline::cline_roots(),
+        "roo-code" => cline::roo_roots(),
+        "aider" => aider::scan_roots(),
+        "goose" => goose::scan_roots(),
         _ => Vec::new(),
     }
 }
