@@ -23,13 +23,29 @@ use serde_json::Value;
 use super::util::{
     self, model_on_record, session_on_record, ts_on_record, usage_counts, usage_on_record,
 };
-use crate::tokens::TokenEvent;
+use crate::tokens::{TokenEvent, TokenStore};
 
 const PROVIDER: &str = "cursor";
 const MAX_ROWS: usize = 20_000;
 
 pub fn scan() -> Vec<TokenEvent> {
-    scan_roots().iter().flat_map(|db| scan_db(db)).collect()
+    scan_with_store(TokenStore::open().ok().as_ref())
+}
+
+pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
+    let mut events = Vec::new();
+    for db in scan_roots() {
+        if !db.exists() {
+            continue;
+        }
+        if util::whole_file_changed(store, &db) {
+            events.extend(scan_db(&db));
+            if let Ok(meta) = fs::metadata(&db) {
+                util::mark_scanned(store, &db, meta.len());
+            }
+        }
+    }
+    events
 }
 
 /// Cursor state DBs we know how to read. The global store carries the chat

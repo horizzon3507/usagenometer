@@ -159,6 +159,28 @@ pub fn inspect(id: &str) -> Availability {
         ),
         // Cloud APIs have no separate local agent installation requirement.
         "devin-cloud" => (true, devin_auth(), "devin auth login or set DEVIN_API_KEY"),
+        "openrouter" => {
+            let ready = super::openrouter::resolve_api_key().is_some();
+            let dir_exists = super::openrouter::key_paths()
+                .iter()
+                .any(|p| p.parent().is_some_and(|d| d.is_dir()));
+            (
+                ready || dir_exists,
+                if ready { READY } else { MISSING },
+                "Set OPENROUTER_API_KEY or write ~/.config/openrouter/api-key",
+            )
+        }
+        "deepseek" => {
+            let ready = super::deepseek::resolve_api_key().is_some();
+            let dir_exists = super::deepseek::key_paths()
+                .iter()
+                .any(|p| p.parent().is_some_and(|d| d.is_dir()));
+            (
+                ready || dir_exists,
+                if ready { READY } else { MISSING },
+                "Set DEEPSEEK_API_KEY or write ~/.config/deepseek/api-key",
+            )
+        }
         _ => (false, (CredentialStatus::Invalid, "Unknown agent"), ""),
     };
     let detail = if id == "devin-cloud" {

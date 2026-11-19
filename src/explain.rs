@@ -115,11 +115,24 @@ fn section(p: ProviderArg) -> String {
                · 5 hour / weekly — spend windows {used, cap, resetAt} from the credits endpoint.\n\
              Token ledger: ~/.commandcode/projects/*/*.jsonl (per-message usage).\n\
              Set COMMANDCODE_API_URL to point at a staging or local API.\n".to_string(),
+        ProviderArg::OpenRouter => "OpenRouter\n\
+             Source: OPENROUTER_API_KEY or ~/.config/openrouter/api-key → openrouter.ai/api/v1/credits\n\
+             Meters:\n\
+               · Credits — remaining USD balance vs purchased credits.\n".to_string(),
+        ProviderArg::DeepSeek => "DeepSeek\n\
+             Source: DEEPSEEK_API_KEY or ~/.config/deepseek/api-key → api.deepseek.com/user/balance\n\
+             Meters:\n\
+               · Balance — total USD/CNY balance returned by DeepSeek.\n".to_string(),
         ProviderArg::OpenCode
         | ProviderArg::Droid
         | ProviderArg::Pi
         | ProviderArg::DevinLocal
-        | ProviderArg::Gemini => format!(
+        | ProviderArg::Gemini
+        | ProviderArg::Windsurf
+        | ProviderArg::Cline
+        | ProviderArg::RooCode
+        | ProviderArg::Aider
+        | ProviderArg::Goose => format!(
             "{}\nLocal token ledger; no quota API. Use usg tokens -p {}.\n",
             crate::providers::provider_label(p.id()),
             p.id()

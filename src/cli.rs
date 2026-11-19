@@ -17,7 +17,8 @@ fn cli_styles() -> Styles {
 }
 
 /// Which meter value to emphasize in the panel.
-#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DisplayMode {
     /// Remaining quota (default)
     #[default]
@@ -134,6 +135,14 @@ pub enum ProviderArg {
     Pi,
     DevinLocal,
     Gemini,
+    OpenRouter,
+    DeepSeek,
+    Windsurf,
+    Cline,
+    #[value(name = "roo-code")]
+    RooCode,
+    Aider,
+    Goose,
 }
 
 impl ProviderArg {
@@ -157,6 +166,13 @@ impl ProviderArg {
             Self::Pi => "pi",
             Self::DevinLocal => "devin-local",
             Self::Gemini => "gemini",
+            Self::OpenRouter => "openrouter",
+            Self::DeepSeek => "deepseek",
+            Self::Windsurf => "windsurf",
+            Self::Cline => "cline",
+            Self::RooCode => "roo-code",
+            Self::Aider => "aider",
+            Self::Goose => "goose",
         }
     }
 
@@ -175,6 +191,8 @@ impl ProviderArg {
             Self::CommandCode,
             Self::OpenCodeGo,
             Self::OpenCodeZen,
+            Self::OpenRouter,
+            Self::DeepSeek,
         ]
     }
 
@@ -191,6 +209,8 @@ impl ProviderArg {
             Self::Fx,
             Self::OpenCodeGo,
             Self::OpenCodeZen,
+            Self::OpenRouter,
+            Self::DeepSeek,
             Self::Omp,
             Self::OpenCode,
             Self::Droid,

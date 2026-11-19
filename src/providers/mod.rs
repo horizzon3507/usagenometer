@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod commandcode;
 pub mod cursor;
+pub mod deepseek;
 pub mod devin_cloud;
 pub mod fx;
 pub mod glm;
@@ -13,6 +14,7 @@ pub mod grok;
 pub mod kimi;
 pub mod opencode;
 mod opencode_console;
+pub mod openrouter;
 pub mod types;
 
 use crate::cache::SnapshotCache;
@@ -195,6 +197,27 @@ pub fn provider_capabilities(id: &str) -> ProviderCapabilities {
         "fx" => ProviderCapabilities {
             real_quota: false,
             money_balance: true,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: true,
+        },
+        "openrouter" => ProviderCapabilities {
+            real_quota: true,
+            money_balance: true,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: false,
+        },
+        "deepseek" => ProviderCapabilities {
+            real_quota: false,
+            money_balance: true,
+            reset_windows: false,
+            local_history: true,
+            token_ledger: false,
+        },
+        "windsurf" | "cline" | "roo-code" | "aider" | "goose" => ProviderCapabilities {
+            real_quota: false,
+            money_balance: false,
             reset_windows: false,
             local_history: true,
             token_ledger: true,
