@@ -604,6 +604,7 @@ pub fn snapshot_from_quota_summary(summary: &Value, account: Option<&str>) -> Pr
         plan: None,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

@@ -396,6 +396,7 @@ pub fn snapshot_from_usage_summary(summary: &Value, auth: &Auth) -> ProviderSnap
             .or_else(|| auth.membership_type.clone()),
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

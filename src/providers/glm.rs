@@ -214,6 +214,7 @@ fn snapshot_from_quota(payload: &Value) -> ProviderSnapshot {
         plan,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

@@ -41,6 +41,7 @@ pub fn fetch(client: &HttpClient) -> ProviderSnapshot {
                         plan: Some("antigravity".into()),
                         meters,
                         stale_age_secs: None,
+                        latency_ms: None,
                     };
                 }
             }
@@ -57,6 +58,7 @@ pub fn fetch(client: &HttpClient) -> ProviderSnapshot {
                     plan: None,
                     meters: vec![],
                     stale_age_secs: None,
+                    latency_ms: None,
                 };
             }
 
@@ -281,6 +283,7 @@ pub fn snapshot_from_oauth_usage(summary: &Value, auth: &Auth) -> ProviderSnapsh
         plan: auth.subscription_type.clone(),
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

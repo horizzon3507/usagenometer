@@ -404,6 +404,7 @@ fn snapshot_from_usages(payload: &Value) -> ProviderSnapshot {
         plan: None,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

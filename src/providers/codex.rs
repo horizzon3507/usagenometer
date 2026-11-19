@@ -71,6 +71,7 @@ fn fetch_inner(client: &HttpClient) -> Result<ProviderSnapshot, FetchErr> {
             .map(str::to_string),
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     })
 }
 

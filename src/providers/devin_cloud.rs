@@ -363,6 +363,7 @@ fn consumption_snapshot(
         plan: None,
         meters: meters_from_days(&days, now, (cycle_cap > 0.0).then_some(cycle_cap)),
         stale_age_secs: None,
+        latency_ms: None,
     })
 }
 
@@ -521,6 +522,7 @@ fn sessions_snapshot(
         plan: None,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     })
 }
 
@@ -671,6 +673,7 @@ fn cli_snapshot_from_status(payload: &Value) -> ProviderSnapshot {
         plan,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

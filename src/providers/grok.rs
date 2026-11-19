@@ -843,6 +843,7 @@ pub fn snapshot_from_billing(
         plan,
         meters,
         stale_age_secs: None,
+        latency_ms: None,
     }
 }
 

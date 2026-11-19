@@ -51,6 +51,9 @@ pub struct ProviderSnapshot {
     /// Age in seconds when served from cache after a failed live fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_age_secs: Option<u64>,
+    /// Fetch latency in milliseconds when queried live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
 }
 
 impl ProviderSnapshot {
@@ -64,6 +67,7 @@ impl ProviderSnapshot {
             plan: None,
             meters: vec![],
             stale_age_secs: None,
+            latency_ms: None,
         }
     }
 
@@ -77,6 +81,7 @@ impl ProviderSnapshot {
             plan: None,
             meters: vec![],
             stale_age_secs: None,
+            latency_ms: None,
         }
     }
 }
