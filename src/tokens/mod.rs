@@ -441,7 +441,7 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> Result<usize> {
                 "commandcode" => collect::commandcode::scan_with_store(Some(store)),
                 "grok" => collect::grok::scan_with_store(Some(store)),
                 "gemini" => collect::gemini::scan_with_store(Some(store)),
-                "cursor" => collect::cursor::scan(),
+                "cursor" => collect::cursor::scan_with_store(Some(store)),
                 "antigravity" => collect::antigravity::scan_with_store(Some(store)),
                 "opencode" => collect::opencode::scan_with_store(Some(store)),
                 "glm" => collect::glm::scan_with_store(Some(store)),
