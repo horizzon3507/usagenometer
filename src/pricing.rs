@@ -32,9 +32,12 @@ pub struct ModelPriceOverride {
 // Sorted per family; matching is exact → longest-prefix → unambiguous supertyprefix.
 const TABLE: &[(&str, [f64; 4])] = &[
     // Anthropic Claude — cache write = 1.25x input, cache read = 0.1x input.
+    ("claude-opus-4-6", [15.0, 75.0, 1.50, 18.75]),
+    ("claude-opus-4-5", [15.0, 75.0, 1.50, 18.75]),
     ("claude-opus-4-1", [15.0, 75.0, 1.50, 18.75]),
     ("claude-opus-4-0", [15.0, 75.0, 1.50, 18.75]),
     ("claude-3-opus", [15.0, 75.0, 1.50, 18.75]),
+    ("claude-sonnet-4-6", [3.0, 15.0, 0.30, 3.75]),
     ("claude-sonnet-4-5", [3.0, 15.0, 0.30, 3.75]),
     ("claude-sonnet-4-0", [3.0, 15.0, 0.30, 3.75]),
     ("claude-3-7-sonnet", [3.0, 15.0, 0.30, 3.75]),
@@ -43,6 +46,8 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("claude-3-5-haiku", [0.80, 4.0, 0.08, 1.0]),
     ("claude-3-haiku", [0.25, 1.25, 0.03, 0.30]),
     // OpenAI GPT-5 / Codex — no cache-write premium, cache_read = cached-input rate.
+    ("gpt-5-2-codex", [1.25, 10.0, 0.125, 1.25]),
+    ("gpt-5-2", [1.25, 10.0, 0.125, 1.25]),
     ("gpt-5-1-codex-max", [1.25, 10.0, 0.125, 1.25]),
     ("gpt-5-1-codex-mini", [0.25, 2.0, 0.025, 0.25]),
     ("gpt-5-1-codex", [1.25, 10.0, 0.125, 1.25]),
@@ -59,6 +64,8 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("gpt-4o-mini", [0.15, 0.60, 0.075, 0.15]),
     ("gpt-4o", [2.50, 10.0, 1.25, 2.50]),
     ("o4-mini", [1.10, 4.40, 0.275, 1.10]),
+    ("o3-pro", [20.0, 80.0, 20.0, 20.0]),
+    ("o3-mini", [1.10, 4.40, 0.55, 1.10]),
     ("o3", [2.0, 8.0, 0.50, 2.0]),
     // Google Gemini (gemini-2-5-pro uses the <=200k prompt tier).
     ("gemini-3-pro", [2.0, 12.0, 0.20, 2.0]),
@@ -75,7 +82,12 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("grok-4", [3.0, 15.0, 0.75, 3.0]),
     ("grok-3-mini", [0.30, 0.50, 0.075, 0.30]),
     ("grok-3", [3.0, 15.0, 0.75, 3.0]),
-    // z.ai GLM — cached-input rate documented per model; cache write = input
+    // DeepSeek — cache write = input, cache read = cache hit rate.
+    ("deepseek-reasoner", [0.55, 2.19, 0.14, 0.55]),
+    ("deepseek-r1", [0.55, 2.19, 0.14, 0.55]),
+    ("deepseek-chat", [0.27, 1.10, 0.07, 0.27]),
+    ("deepseek-v3", [0.27, 1.10, 0.07, 0.27]),
+    // z.ai / Zhipu GLM — cached-input rate documented per model; cache write = input
     // (no documented write premium; free-tier models priced at 0).
     ("glm-5-1", [1.40, 4.40, 0.26, 1.40]),
     ("glm-5", [1.0, 3.20, 0.20, 1.0]),
@@ -86,13 +98,6 @@ const TABLE: &[(&str, [f64; 4])] = &[
     ("glm-4-5-x", [2.20, 8.90, 0.45, 2.20]),
     ("glm-4-5-flash", [0.0, 0.0, 0.0, 0.0]),
     ("glm-4-5-airx", [1.10, 4.50, 0.22, 1.10]),
-    ("glm-4-5-air", [0.20, 1.10, 0.03, 0.20]),
-    ("glm-4-5", [0.60, 2.20, 0.11, 0.60]),
-    // Zhipu GLM (z.ai published rates) — Droid Core pool on Factory.
-    ("glm-5-1", [1.40, 4.40, 0.26, 1.40]),
-    ("glm-5", [1.0, 3.20, 0.20, 1.0]),
-    ("glm-4-7", [0.60, 2.20, 0.11, 0.60]),
-    ("glm-4-6", [0.60, 2.20, 0.11, 0.60]),
     ("glm-4-5-air", [0.20, 1.10, 0.03, 0.20]),
     ("glm-4-5", [0.60, 2.20, 0.11, 0.60]),
     // Moonshot Kimi — cache write = input, cache read = cached-input rate.
@@ -149,9 +154,15 @@ pub fn normalize_model(model: &str) -> String {
         .collect();
     // Strip trailing -<8-digit date>, -<yyyy-mm-dd>, -v<n>, -latest/-preview…
     loop {
+        if TABLE.iter().any(|(k, _)| *k == s) {
+            break;
+        }
         let stripped = s.clone();
         if let Some(rest) = strip_date_suffix(&s) {
             s = rest;
+        }
+        if TABLE.iter().any(|(k, _)| *k == s) {
+            break;
         }
         for suf in ["-latest", "-preview", "-beta", "-exp", "-instruct"] {
             if let Some(rest) = s.strip_suffix(suf) {
@@ -346,6 +357,50 @@ pub fn total_cost_usd(
     (total, unpriced)
 }
 
+/// Net USD saved (or extra write premium spent) by prompt caching for one event.
+pub fn event_cache_savings_usd_merged(
+    ev: &TokenEvent,
+    overrides: &HashMap<String, ModelPriceOverride>,
+) -> Option<f64> {
+    let model = ev.model.as_deref()?;
+    let p = price_for_merged(model, overrides)?;
+    Some(
+        ((ev.cache_read_tokens as f64 * (p.input - p.cache_read))
+            - (ev.cache_write_tokens as f64 * (p.cache_write - p.input)))
+            / 1_000_000.0,
+    )
+}
+
+/// Total net USD saved by prompt caching across priced events.
+pub fn total_cache_savings_usd(
+    events: &[TokenEvent],
+    overrides: &HashMap<String, ModelPriceOverride>,
+) -> f64 {
+    events
+        .iter()
+        .filter_map(|ev| event_cache_savings_usd_merged(ev, overrides))
+        .sum()
+}
+
+/// Event counts grouped by model string for events without a known price.
+pub fn unpriced_models(
+    events: &[TokenEvent],
+    overrides: &HashMap<String, ModelPriceOverride>,
+) -> std::collections::BTreeMap<String, usize> {
+    let mut map = std::collections::BTreeMap::new();
+    for ev in events {
+        if event_cost_usd_merged(ev, overrides).is_none() {
+            let name = ev
+                .model
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("unknown");
+            *map.entry(name.to_string()).or_insert(0) += 1;
+        }
+    }
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,5 +499,33 @@ mod tests {
             },
         );
         assert!(price_for_merged("half-priced", &overrides).is_none());
+    }
+
+    #[test]
+    fn table_keys_are_unique_and_resolvable() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, _) in TABLE {
+            assert!(seen.insert(*key), "duplicate pricing key: {key}");
+            assert_eq!(normalize_model(key), *key, "unnormalized key: {key}");
+            assert!(
+                price_for(key).is_some(),
+                "table key failed price_for lookup: {key}"
+            );
+        }
+        assert_eq!(price_for("kimi-latest").unwrap().input, 2.0);
+    }
+
+    #[test]
+    fn cache_savings_math() {
+        let overrides = HashMap::new();
+        let e = ev("claude-sonnet-4-5", 100_000, 0, 1_000_000, 0);
+        let savings = event_cache_savings_usd_merged(&e, &overrides).unwrap();
+        // 1M cache_read at $0.30 instead of $3.00 = $2.70 saved.
+        assert!((savings - 2.70).abs() < 1e-9);
+        assert!((total_cache_savings_usd(&[e], &overrides) - 2.70).abs() < 1e-9);
+
+        let unknown = ev("unknown-model", 10, 0, 10, 0);
+        let missing = unpriced_models(&[unknown], &overrides);
+        assert_eq!(missing.get("unknown-model"), Some(&1));
     }
 }
