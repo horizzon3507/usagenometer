@@ -250,6 +250,71 @@ impl TokenStore {
         }
     }
 
+    pub fn reset_scan_offsets(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM token_scan_offsets", [])?)
+    }
+
+    pub fn scan_offset_count(&self) -> Result<u64> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM token_scan_offsets", [], |r| r.get(0))?;
+        Ok(n.max(0) as u64)
+    }
+
+    /// Remove stored scan offsets whose target files no longer exist on disk.
+    pub fn prune_dead_offsets(&self) -> Result<usize> {
+        let mut stmt = self.conn.prepare("SELECT path FROM token_scan_offsets")?;
+        let paths: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .flatten()
+            .collect();
+        drop(stmt);
+        let mut deleted = 0usize;
+        for raw in paths {
+            let disk_path = raw.strip_prefix("glm:").unwrap_or(&raw);
+            if !std::path::Path::new(disk_path).exists() {
+                deleted += self.conn.execute(
+                    "DELETE FROM token_scan_offsets WHERE path = ?1",
+                    params![raw],
+                )?;
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub fn events_in_range(
+        &self,
+        since_unix: Option<f64>,
+        until_unix: Option<f64>,
+        provider: Option<&str>,
+    ) -> Result<Vec<TokenEvent>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT provider, model, session_id, project, ts,
+                   input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+            FROM token_events
+            WHERE (?1 IS NULL OR ts >= ?1)
+              AND (?2 IS NULL OR ts < ?2)
+              AND (?3 IS NULL OR provider = ?3)
+            ORDER BY ts ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![since_unix, until_unix, provider], |row| {
+            Ok(TokenEvent {
+                provider: row.get(0)?,
+                model: row.get(1)?,
+                session_id: row.get(2)?,
+                project: row.get(3)?,
+                ts_unix: row.get(4)?,
+                input_tokens: row.get::<_, i64>(5)?.max(0) as u64,
+                output_tokens: row.get::<_, i64>(6)?.max(0) as u64,
+                cache_read_tokens: row.get::<_, i64>(7)?.max(0) as u64,
+                cache_write_tokens: row.get::<_, i64>(8)?.max(0) as u64,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Checkpoint failures are retained for the scan coordinator to roll back.
     pub fn set_scan_offset(&self, path: &std::path::Path, byte_offset: u64, mtime: f64) {
         let result = self.conn.execute(
@@ -526,6 +591,43 @@ pub fn parse_since(s: &str) -> Option<f64> {
         return Some(date.midnight().assume_offset(local).unix_timestamp() as f64);
     }
     None
+}
+
+/// Normalize stored project labels (e.g. `/work/proj` or `proj`) to a canonical basename.
+pub fn canonical_project_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(trimmed)
+            .to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Resolve the current workspace's project name (walking up to `.git` root if present).
+pub fn resolve_here_project() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let mut dir = cwd.as_path();
+    loop {
+        if dir.join(".git").exists()
+            && let Some(name) = dir.file_name().and_then(|s| s.to_str())
+            && !name.is_empty()
+        {
+            return Some(name.to_string());
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => break,
+        }
+    }
+    cwd.file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Thousands separators for big token counts (1234567 → "1,234,567").
