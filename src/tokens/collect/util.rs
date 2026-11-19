@@ -341,6 +341,11 @@ where
     F: Fn(&Value) -> Vec<TokenEvent>,
 {
     let mut events = Vec::new();
+    if let Ok(meta) = fs::metadata(path)
+        && meta.len() == offset
+    {
+        return (events, offset);
+    }
     let Ok(mut file) = fs::File::open(path) else {
         return (events, offset);
     };
@@ -402,18 +407,42 @@ pub fn whole_file_changed(store: Option<&TokenStore>, path: &Path) -> bool {
     let Ok(meta) = fs::metadata(path) else {
         return false;
     };
-    let cur_mtime = meta
+    let mut cur_mtime = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
+    let wal = PathBuf::from(format!("{}-wal", path.display()));
+    if let Ok(wmeta) = fs::metadata(&wal)
+        && wmeta.len() > 0
+    {
+        let wal_mtime = wmeta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        cur_mtime = cur_mtime.max(wal_mtime);
+    }
     meta.len() != offset || cur_mtime != mtime
 }
 
 pub fn mark_scanned(store: Option<&TokenStore>, path: &Path, offset: u64) {
     if let Some(store) = store {
-        store.set_scan_offset(path, offset, file_mtime(path));
+        if let Ok(Some((prev_offset, _))) = store.scan_offset(path)
+            && prev_offset == offset
+        {
+            return;
+        }
+        let mut cur_mtime = file_mtime(path);
+        let wal = PathBuf::from(format!("{}-wal", path.display()));
+        if let Ok(wmeta) = fs::metadata(&wal)
+            && wmeta.len() > 0
+        {
+            cur_mtime = cur_mtime.max(file_mtime(&wal));
+        }
+        store.set_scan_offset(path, offset, cur_mtime);
     }
 }
 

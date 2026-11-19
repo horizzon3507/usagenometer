@@ -18,6 +18,10 @@ pub mod omp;
 pub mod opencode;
 pub mod pi;
 mod util;
+pub mod windsurf;
+pub mod cline;
+pub mod aider;
+pub mod goose;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

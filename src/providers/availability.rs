@@ -181,6 +181,45 @@ pub fn inspect(id: &str) -> Availability {
                 "Set DEEPSEEK_API_KEY or write ~/.config/deepseek/api-key",
             )
         }
+        "windsurf" => (
+            has_any_command(&["windsurf", "surf"])
+                || app_installed("Windsurf", &["windsurf.desktop"]),
+            if crate::tokens::collect::windsurf::scan_roots()
+                .iter()
+                .any(|r| r.is_dir())
+            {
+                READY
+            } else {
+                MISSING
+            },
+            "Sign in to Windsurf",
+        ),
+        "cline" => {
+            let found = crate::tokens::collect::cline::cline_roots()
+                .iter()
+                .any(|r| r.is_dir());
+            (
+                found,
+                if found { READY } else { MISSING },
+                "Install the Cline extension in VS Code / Cursor",
+            )
+        }
+        "roo-code" => {
+            let found = crate::tokens::collect::cline::roo_roots()
+                .iter()
+                .any(|r| r.is_dir());
+            (
+                found,
+                if found { READY } else { MISSING },
+                "Install the Roo Code extension in VS Code / Cursor",
+            )
+        }
+        "aider" => (
+            has_command("aider"),
+            aider_auth(),
+            "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or OPENROUTER_API_KEY",
+        ),
+        "goose" => (has_command("goose"), goose_auth(), "goose configure"),
         _ => (false, (CredentialStatus::Invalid, "Unknown agent"), ""),
     };
     let detail = if id == "devin-cloud" {
@@ -278,6 +317,35 @@ fn has_command(command: &str) -> bool {
 
 fn has_any_command(commands: &[&str]) -> bool {
     commands.iter().any(|command| has_command(command))
+}
+
+/// First executable command name on `PATH` corresponding to `id`, if installed.
+pub fn resolve_agent_binary(id: &str) -> Option<String> {
+    let candidates: &[&str] = match id {
+        "claude" => &["claude"],
+        "codex" => &["codex"],
+        "cursor" => &["cursor-agent", "cursor", "agent"],
+        "antigravity" => &["agy", "antigravity"],
+        "grok" => &["grok"],
+        "glm" => &["claude"],
+        "fx" => &["fx"],
+        "commandcode" => &["commandcode", "command-code"],
+        "kimi" => &["kimi", "kimi-cli", "kimi-code"],
+        "opencode" | "opencode-go" | "opencode-zen" => &["opencode"],
+        "omp" => &["omp"],
+        "pi" => &["pi"],
+        "gemini" => &["gemini"],
+        "droid" => &["droid"],
+        "devin-local" | "devin-cloud" => &["devin"],
+        "windsurf" => &["windsurf", "surf"],
+        "aider" => &["aider"],
+        "goose" => &["goose"],
+        _ => &[],
+    };
+    candidates
+        .iter()
+        .find(|cmd| has_command(cmd))
+        .map(|cmd| (*cmd).to_string())
 }
 
 fn app_installed(name: &str, desktops: &[&str]) -> bool {
@@ -1247,6 +1315,47 @@ fn gemini_auth() -> Check {
         None if refreshable => REFRESHABLE,
         None => MISSING,
     }
+}
+
+fn aider_auth() -> Check {
+    for var in [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+    ] {
+        if let Some(val) = env_value(var) {
+            return token_check(&val, None, false, false);
+        }
+    }
+    if home().join(".aider.conf.yml").exists() || home().join(".aider/analytics.jsonl").exists() {
+        READY
+    } else {
+        MISSING
+    }
+}
+
+fn goose_auth() -> Check {
+    let cfg = dirs::config_dir()
+        .unwrap_or_else(|| home().join(".config"))
+        .join("goose");
+    if cfg.join("config.yaml").exists() || cfg.join("profiles.yaml").exists() {
+        return READY;
+    }
+    for var in [
+        "GOOSE_PROVIDER",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+    ] {
+        if let Some(val) = env_value(var)
+            && safe_token(&val)
+        {
+            return READY;
+        }
+    }
+    MISSING
 }
 
 #[cfg(test)]

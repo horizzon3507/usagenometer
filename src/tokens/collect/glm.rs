@@ -41,7 +41,9 @@ pub(crate) fn scan_with_store(store: Option<&TokenStore>) -> Vec<TokenEvent> {
         let offset = resume_offset(store, &key, &file);
         let (mut found, next) = read_jsonl_events(&file, offset, |v| glm_event(v, &slug));
         events.append(&mut found);
-        if let Some(store) = store {
+        if let Some(store) = store
+            && (offset != next || store.scan_offset(&key).ok().flatten().is_none())
+        {
             store.set_scan_offset(&key, next, file_mtime(&file));
         }
     }

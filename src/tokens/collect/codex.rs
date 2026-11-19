@@ -98,6 +98,11 @@ pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
             last_ts: None,
             prev_total: None,
         };
+        let prev_offset = offsets.get(&file);
+        let file_len = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+        if prev_offset > 0 && prev_offset < file_len {
+            warm_ctx_prefix(&file, prev_offset, &mut ctx);
+        }
         for line in appended_lines(&file, offsets) {
             collect_line(
                 &line,
@@ -109,6 +114,51 @@ pub fn collect(offsets: &mut ScanOffsets) -> Vec<TokenEvent> {
         }
     }
     events
+}
+
+fn warm_ctx_prefix(path: &std::path::Path, prefix_bytes: u64, ctx: &mut Ctx) {
+    use std::io::{BufRead, BufReader};
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let mut reader = BufReader::new(file);
+    let mut read_bytes = 0u64;
+    let mut line = String::new();
+    while read_bytes < prefix_bytes {
+        line.clear();
+        let Ok(n) = reader.read_line(&mut line) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
+        read_bytes += n as u64;
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
+            let payload = v.get("payload").cloned().unwrap_or(Value::Null);
+            if let Some(ts) = line_timestamp(&v, &payload) {
+                ctx.last_ts = Some(ts);
+            }
+            match v.get("type").and_then(Value::as_str).unwrap_or("") {
+                "session_meta" => {
+                    set_str(&mut ctx.session, payload.get("id"));
+                    set_str(&mut ctx.cwd, payload.get("cwd"));
+                    set_str(&mut ctx.model, payload.get("model"));
+                }
+                "turn_context" => {
+                    set_str(&mut ctx.cwd, payload.get("cwd"));
+                    set_str(&mut ctx.model, payload.get("model"));
+                }
+                _ => {}
+            }
+            if payload.get("type").and_then(Value::as_str) == Some("token_count")
+                && let Some(info) = payload.get("info")
+                && let Some(total) = info.get("total_token_usage").and_then(usage_tuple)
+            {
+                ctx.prev_total = Some(total);
+            }
+        }
+    }
 }
 
 fn collect_line(
@@ -365,6 +415,23 @@ mod tests {
         assert_eq!(events[0].session_id.as_deref(), Some("sess-codex-1"));
         assert_eq!(events[0].project.as_deref(), Some("myproj"));
         assert!(collect(&mut offsets).is_empty());
+
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-09-30T10:10:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":5,"output_tokens":2}}}}}}}}"#
+        )
+        .unwrap();
+        drop(f);
+        let appended = collect(&mut offsets);
+        assert_eq!(appended.len(), 1);
+        assert_eq!(appended[0].session_id.as_deref(), Some("sess-codex-1"));
+        assert_eq!(appended[0].project.as_deref(), Some("myproj"));
+        assert_eq!(appended[0].model.as_deref(), Some("gpt-5-codex"));
 
         unsafe {
             std::env::remove_var("CODEX_HOME");

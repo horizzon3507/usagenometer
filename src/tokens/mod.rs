@@ -451,6 +451,11 @@ fn scan_with_store(store: &TokenStore, providers: &[&str]) -> Result<usize> {
                 "kimi" => collect::kimi::scan_with_store(Some(store)),
                 "devin-local" => collect::devin_local::scan_with_store(Some(store)),
                 "fx" => collect::fx::scan_with_store(Some(store)),
+                "windsurf" => collect::windsurf::scan_with_store(Some(store)),
+                "cline" => collect::cline::scan_cline_with_store(Some(store)),
+                "roo-code" => collect::cline::scan_roo_with_store(Some(store)),
+                "aider" => collect::aider::scan_with_store(Some(store)),
+                "goose" => collect::goose::scan_with_store(Some(store)),
                 _ => Vec::new(),
             };
             events.append(&mut batch);
@@ -501,6 +506,11 @@ pub struct Totals {
 impl Totals {
     pub fn total(&self) -> u64 {
         self.input + self.output + self.cache_read + self.cache_write
+    }
+
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        let prompt = self.input + self.cache_read + self.cache_write;
+        (prompt > 0).then(|| self.cache_read as f64 / prompt as f64)
     }
 
     pub fn add(&mut self, e: &TokenEvent) {

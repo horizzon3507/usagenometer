@@ -223,9 +223,19 @@ struct JsonlState {
 
 impl JsonlState {
     fn apply_record(&mut self, record: &Value, _path: &Path, fallback_ts: f64) -> Vec<TokenEvent> {
-        // Header/metadata line carries sessionId + projectHash.
+        // Header/metadata line carries sessionId + directories + projectHash.
         if let Some(id) = record.get("sessionId").and_then(|v| v.as_str()) {
             self.session_id = id.to_string();
+        }
+        if self.project.is_none()
+            && let Some(dir) = record
+                .get("directories")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+            && let Some(name) = crate::tokens::collect::project_name(dir, "")
+        {
+            self.project = Some(name);
         }
         if self.project.is_none()
             && let Some(ph) = record.get("projectHash").and_then(|v| v.as_str())
