@@ -31,6 +31,26 @@ Versions at `v0.1.5m-beta` and earlier shipped a GNOME Shell companion (tags `gn
 
 </details>
 
+## v0.2.0-beta · 19/11/2026
+
+Two prepaid balance providers, five new token-ledger agents, smart routing (`pick`/`run`), account profiles with project config, and a deeper reporting surface across `tokens`, `history`, `check` and the TUI. This version was made for CLI with a beta release channel on 19/11/2026 (v0.2.0-beta).
+
+- New `openrouter` provider: prepaid credit balance in USD from `openrouter.ai/api/v1/credits`, reading `OPENROUTER_API_KEY` or `~/.config/openrouter/api-key` (`OPENROUTER_API_URL` overrides the endpoint for testing).
+- New `deepseek` provider: API balance in USD from `api.deepseek.com/user/balance`, reading `DEEPSEEK_API_KEY` or `~/.config/deepseek/api-key` (`DEEPSEEK_API_URL` overrides the endpoint for testing).
+- New token-ledger collectors for Windsurf, Cline, Roo Code, Aider and Goose — five more agents feed `usg tokens`, the TUI and budget checks with per-model, per-project and per-day token counts.
+- `usg pick` (alias `route`) selects the best provider for scripting: `--strategy headroom|reset|runway` ranks by remaining quota, soonest reset or burn-rate runway, `--cmd` prints the resolved local CLI binary, and `--allow-stale` permits cached snapshots.
+- `usg run` picks the best ready agent CLI under the same strategies and executes it with the trailing arguments.
+- `usg check` adds `--min-balance-usd`, `--fail-eta-hours`, `--here` and `--project` gates on top of `--fail-under` and `--budget-usd`, keeping the 0/1/2 exit contract.
+- Multi-account profiles: `[profiles.<name>]` in `config.toml` overrides providers, budget, alert and env vars (e.g. `CODEX_HOME`); select one with `--profile`/`USG_PROFILE`. Per-project `.usg.toml` files apply automatically walking up from `cwd` (`--no-project-config` disables), and `--config PATH`/`USG_CONFIG`/`USG_CONFIG_DIR`/`USG_DATA_DIR`/`USG_CACHE_DIR` relocate config, ledger and cache.
+- Provider snapshots fetch in parallel over a shared HTTP client, record per-provider `latency_ms`, cache per-profile, and connect/total timeouts tightened to 5s/20s.
+- Alerting learns prepaid balances: `alert_balance_usd` (global and per-provider) fires below a USD threshold, ETA alerts are suppressed when a meter resets before exhaustion, and state transitions can call a `notify_webhook_url` (JSON payload) or `notify_command` (`USG_ALERT_SUMMARY`).
+- `usg tokens` adds `--until`, `--here`, `--project`, `--session`, `--top`, `--compare` (Δ% vs the previous equal period), `--spark` sparklines, `--heatmap` 7×24 activity grid and `--rescan`; the ledger gains a `(project, ts)` index, a busy timeout, dead-offset pruning (`doctor --fix`) and `cache_hit_ratio` in JSON totals.
+- `usg history` adds `--prune DAYS` and `--diff WHEN` alongside `--runway`; runway now reports a pace factor and a verdict, and ETA estimation only uses samples after the last quota reset.
+- `usg config` adds `--path`, `--init`, `--force` and `--validate`; `usg doctor` reports availability-driven auth for every agent, warns on tokens expiring within the hour, and `--fix` repairs XDG dirs, credential permissions and dead scan offsets.
+- New output surfaces: `--format waybar` emits Waybar JSON, `--format csv` exports token rows, Prometheus metrics carry USD pricing, and compact output gains `--compact-cost` and a `--template` statusline.
+- TUI Tokens tab: provider/project breakdown tables, a daily activity chart, and keyboard focus/filter/cost/privacy controls.
+- Various other reliability fixes and test coverage
+
 ## v0.1.6-beta · 04/11/2026
 
 Command Code joins the quota panel and the token ledger, and the GNOME Shell companion is discontinued. This version was made for CLI with a beta release channel on 04/11/2026 (v0.1.6-beta).
