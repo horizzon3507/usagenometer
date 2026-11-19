@@ -31,6 +31,12 @@ Versions at `v0.1.5m-beta` and earlier shipped a GNOME Shell companion (tags `gn
 
 </details>
 
+## v0.2.1-beta · 19/11/2026
+
+Profile fields are now covered by `usg config --validate`. This version was made for CLI with a beta release channel on 19/11/2026 (v0.2.1-beta).
+
+- `usg config --validate` now checks `[profiles.<name>]`: unknown provider names in `providers`, a `budget_period` outside `day|week|month`, negative `budget_usd` and `alert` outside 0–100 are reported instead of passing silently.
+
 ## v0.2.0-beta · 19/11/2026
 
 Two prepaid balance providers, five new token-ledger agents, smart routing (`pick`/`run`), account profiles with project config, and a deeper reporting surface across `tokens`, `history`, `check` and the TUI. This version was made for CLI with a beta release channel on 19/11/2026 (v0.2.0-beta).

@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "usagenometer"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "aes-gcm",
  "anyhow",
