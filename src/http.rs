@@ -41,7 +41,8 @@ pub struct HttpClient {
 impl HttpClient {
     pub fn new() -> Result<Self> {
         let inner = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(20))
             .user_agent("usagenometer/0.1")
             .build()
             .context("failed to build HTTP client")?;
