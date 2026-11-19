@@ -354,6 +354,39 @@ impl ConfigFile {
         {
             errs.push(format!("invalid `alert`: {a} (want 0..=100)"));
         }
+        for (pname, p) in &self.profiles {
+            if let Some(list) = &p.providers {
+                for name in list {
+                    if parse_provider_name(name).is_none() {
+                        errs.push(format!(
+                            "unknown provider in `[profiles.{pname}].providers`: '{name}'"
+                        ));
+                    }
+                }
+            }
+            if let Some(bp) = p.budget_period.as_deref() {
+                let norm = bp.trim().to_ascii_lowercase();
+                if !matches!(norm.as_str(), "day" | "week" | "month") {
+                    errs.push(format!(
+                        "invalid `[profiles.{pname}].budget_period`: '{bp}' (want 'day', 'week', or 'month')"
+                    ));
+                }
+            }
+            if let Some(b) = p.budget_usd
+                && (!b.is_finite() || b < 0.0)
+            {
+                errs.push(format!(
+                    "invalid `[profiles.{pname}].budget_usd`: {b} (want >= 0)"
+                ));
+            }
+            if let Some(a) = p.alert
+                && (!a.is_finite() || !(0.0..=100.0).contains(&a))
+            {
+                errs.push(format!(
+                    "invalid `[profiles.{pname}].alert`: {a} (want 0..=100)"
+                ));
+            }
+        }
         errs
     }
 
@@ -572,5 +605,23 @@ budget_usd = 12.5
         assert!(cfg.apply_profile("work"));
         assert_eq!(cfg.providers, vec!["claude"]);
         assert_eq!(cfg.budget(), Some(12.5));
+    }
+
+    #[test]
+    fn validate_catches_bad_profile_fields() {
+        let raw = r#"
+[profiles.bad]
+providers = ["not-an-agent"]
+budget_period = "bogus-value"
+budget_usd = -3.0
+alert = 120.0
+"#;
+        let cfg: ConfigFile = toml::from_str(raw).unwrap();
+        let errs = cfg.validate();
+        assert_eq!(errs.len(), 4);
+        assert!(errs.iter().any(|e| e.contains("budget_period")));
+        assert!(errs.iter().any(|e| e.contains("providers")));
+        assert!(errs.iter().any(|e| e.contains("budget_usd")));
+        assert!(errs.iter().any(|e| e.contains("alert")));
     }
 }
