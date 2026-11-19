@@ -16,15 +16,27 @@ pub struct MeterEta {
 }
 
 /// Linear ETA to 100% used from (time, used_fraction) points. Needs ≥2 samples
-/// with positive average burn rate.
+/// with positive average burn rate; if a quota reset occurred mid-series, only
+/// the post-reset segment is used.
 pub fn eta_from_points(points: &[(f64, f64)]) -> Option<(f64, usize)> {
     if points.len() < 2 {
         return None;
     }
     let mut sorted = points.to_vec();
     sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let first = sorted.first()?;
-    let last = sorted.last()?;
+    let mut start_idx = 0;
+    for i in (1..sorted.len()).rev() {
+        if sorted[i].1 + 0.02 < sorted[i - 1].1 {
+            start_idx = i;
+            break;
+        }
+    }
+    let active = &sorted[start_idx..];
+    if active.len() < 2 {
+        return None;
+    }
+    let first = active.first()?;
+    let last = active.last()?;
     let dt = last.0 - first.0;
     if dt <= 0.0 {
         return None;
@@ -36,9 +48,9 @@ pub fn eta_from_points(points: &[(f64, f64)]) -> Option<(f64, usize)> {
     let rate = du / dt; // used fraction per second
     let remaining = (1.0 - last.1).clamp(0.0, 1.0);
     if remaining <= 0.0 {
-        return Some((0.0, sorted.len()));
+        return Some((0.0, active.len()));
     }
-    Some((remaining / rate, sorted.len()))
+    Some((remaining / rate, active.len()))
 }
 
 /// Estimate ETAs for each meter of a provider from history points.
@@ -138,5 +150,15 @@ mod tests {
     fn no_eta_when_flat() {
         let pts = vec![(0.0, 0.4), (100.0, 0.4)];
         assert!(eta_from_points(&pts).is_none());
+    }
+
+    #[test]
+    fn eta_resets_mid_series_uses_post_reset_segment() {
+        // Pre-reset: 0.80 -> 0.90; Reset to 0.10 at t=2000; then 0.30 at t=3000 (0.20 in 1000s).
+        // Remaining 0.70 / (0.20 / 1000s) = 3500s, using 2 post-reset samples.
+        let pts = vec![(0.0, 0.80), (1000.0, 0.90), (2000.0, 0.10), (3000.0, 0.30)];
+        let (secs, n) = eta_from_points(&pts).unwrap();
+        assert_eq!(n, 2);
+        assert!((secs - 3500.0).abs() < 1.0);
     }
 }
