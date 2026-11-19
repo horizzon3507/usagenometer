@@ -75,6 +75,7 @@ impl TokenStore {
         paths::ensure_dir(&path)?;
         let conn = Connection::open(&path)
             .with_context(|| format!("open token ledger {}", path.display()))?;
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
         let store = Self {
             conn,
             path,
@@ -101,6 +102,7 @@ impl TokenStore {
             );
             CREATE INDEX IF NOT EXISTS idx_token_events_ts ON token_events(ts);
             CREATE INDEX IF NOT EXISTS idx_token_events_provider_ts ON token_events(provider, ts);
+            CREATE INDEX IF NOT EXISTS idx_token_events_project_ts ON token_events(project, ts);
             CREATE TABLE IF NOT EXISTS token_scan_offsets (
                 path TEXT PRIMARY KEY,
                 byte_offset INTEGER NOT NULL DEFAULT 0,
@@ -235,7 +237,12 @@ impl TokenStore {
         match self.conn.query_row(
             "SELECT byte_offset, mtime FROM token_scan_offsets WHERE path = ?1",
             params![key],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
+                ))
+            },
         ) {
             Ok((offset, mtime)) => Ok(Some((offset.max(0) as u64, mtime))),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
